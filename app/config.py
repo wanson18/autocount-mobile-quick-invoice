@@ -5,6 +5,11 @@ customer, item, address, invoice, PDF, and e-Invoice call. The account book
 IDs are secrets: they come from the server environment, never from the client.
 The client only ever supplies a CompanyKey.
 
+The internal resolver (``get_company``) returns the full server-side
+``CompanyConfig``, including the account book ID, for downstream AutoCount
+services. The public listing (``list_companies``) returns client-safe
+``CompanyListing`` objects that never expose the account book ID.
+
 Fails fast when an account book ID is missing or not unique, so a misconfigured
 server cannot silently mix data between the two companies.
 """
@@ -35,9 +40,27 @@ class CompanyConfigError(ValueError):
 
 @dataclass(frozen=True)
 class CompanyConfig:
+    """Server-side company configuration, including the secret account book ID.
+
+    Internal only: returned by ``get_company`` for downstream AutoCount
+    services, never by the public listing.
+    """
+
     key: CompanyKey
     name: str
     account_book_id: str
+
+
+@dataclass(frozen=True)
+class CompanyListing:
+    """Client-safe company representation for the public listing.
+
+    Contains only the company key and display name; the server-side account
+    book ID is intentionally absent.
+    """
+
+    key: CompanyKey
+    name: str
 
 
 def _load(env: Mapping[str, str]) -> dict[CompanyKey, CompanyConfig]:
@@ -58,8 +81,8 @@ def _load(env: Mapping[str, str]) -> dict[CompanyKey, CompanyConfig]:
 def get_company(company: CompanyKey, env: Mapping[str, str] | None = None) -> CompanyConfig:
     """Resolve a company key to its server-side configuration.
 
-    Never accepts an account book ID; anything that is not a known
-    CompanyKey is rejected.
+    Internal resolver for downstream AutoCount services. Never accepts an
+    account book ID; anything that is not a known CompanyKey is rejected.
     """
     if env is None:
         env = os.environ
@@ -68,9 +91,12 @@ def get_company(company: CompanyKey, env: Mapping[str, str] | None = None) -> Co
     return _load(env)[company]
 
 
-def list_companies(env: Mapping[str, str] | None = None) -> list[CompanyConfig]:
-    """All configured companies, in a stable order."""
+def list_companies(env: Mapping[str, str] | None = None) -> list[CompanyListing]:
+    """All configured companies, in a stable order, as client-safe listings.
+
+    The account book ID is never part of the returned representation.
+    """
     if env is None:
         env = os.environ
     configs = _load(env)
-    return [configs[key] for key in CompanyKey]
+    return [CompanyListing(key=config.key, name=config.name) for config in (configs[key] for key in CompanyKey)]
