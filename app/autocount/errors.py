@@ -4,14 +4,18 @@ Every exception is safe to surface to callers: messages are sanitised at
 construction time, so ``str`` and ``repr`` never leak the API key, Key ID, or
 account-book ID, even when AutoCount echoes one back in its error text.
 
-The hierarchy deliberately distinguishes three classes of failure so that
+The hierarchy deliberately distinguishes four classes of failure so that
 downstream services (idempotency, reconciliation) can react differently:
 
-- ``AutoCountRejectedError`` — AutoCount answered with a non-2xx status.
-- ``AutoCountTransportError`` — the request never produced an HTTP response
+- ``AutoCountRejectedError`` �?" AutoCount answered with a non-2xx status.
+- ``AutoCountTransportError`` �?" the request never produced an HTTP response
   (including a timeout on a read-like call).
-- ``AutoCountAmbiguousWriteError`` — a timeout on an explicitly marked write,
+- ``AutoCountAmbiguousWriteError`` �?" a timeout on an explicitly marked write,
   where AutoCount may or may not have applied the operation.
+- ``AutoCountDataError`` �?" AutoCount answered 2xx but the success payload was
+  malformed, inconsistent, or unsafe to use. Messages are static and never
+  embed the raw body, so no account-book ID, credential, or taxpayer/customer
+  data can leak.
 """
 
 from __future__ import annotations
@@ -63,3 +67,13 @@ class AutoCountTransportError(AutoCountError):
 
 class AutoCountAmbiguousWriteError(AutoCountError):
     """A write request timed out; AutoCount may or may not have applied it."""
+
+
+class AutoCountDataError(AutoCountError):
+    """A 2xx AutoCount success payload was malformed or unsafe to use.
+
+    Raised by the master-data adapter when a success response cannot be
+    normalised: missing or malformed envelopes, rows, totals, identity
+    mismatches, or unsafe prices. The message is static text only and never
+    includes the raw response body.
+    """

@@ -9,6 +9,7 @@ from app.autocount.client import (
 from app.autocount.errors import (
     AutoCountAmbiguousWriteError,
     AutoCountConfigError,
+    AutoCountDataError,
     AutoCountEndpointError,
     AutoCountError,
     AutoCountRejectedError,
@@ -20,6 +21,7 @@ __all__ = [
     "RequestOperation",
     "AutoCountError",
     "AutoCountConfigError",
+    "AutoCountDataError",
     "AutoCountEndpointError",
     "AutoCountRejectedError",
     "AutoCountTransportError",
