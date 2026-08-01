@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Test artifacts
+.pytest_cache/
+
+# Environment — account book IDs and credentials are secrets
+.env
