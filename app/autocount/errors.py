@@ -1,0 +1,65 @@
+"""Normalised errors raised by the AutoCount integration boundary.
+
+Every exception is safe to surface to callers: messages are sanitised at
+construction time, so ``str`` and ``repr`` never leak the API key, Key ID, or
+account-book ID, even when AutoCount echoes one back in its error text.
+
+The hierarchy deliberately distinguishes three classes of failure so that
+downstream services (idempotency, reconciliation) can react differently:
+
+- ``AutoCountRejectedError`` — AutoCount answered with a non-2xx status.
+- ``AutoCountTransportError`` — the request never produced an HTTP response
+  (including a timeout on a read-like call).
+- ``AutoCountAmbiguousWriteError`` — a timeout on an explicitly marked write,
+  where AutoCount may or may not have applied the operation.
+"""
+
+from __future__ import annotations
+
+
+class AutoCountError(Exception):
+    """Base class for all AutoCount client errors with safe message text."""
+
+    def __init__(self, message: str) -> None:
+        self._safe_message = message
+        super().__init__(message)
+
+    def __str__(self) -> str:
+        return self._safe_message
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self._safe_message!r})"
+
+
+class AutoCountConfigError(AutoCountError):
+    """Client configuration is invalid (for example, empty credentials)."""
+
+
+class AutoCountEndpointError(AutoCountError):
+    """A caller-supplied endpoint is not a safe relative AutoCount path."""
+
+
+class AutoCountRejectedError(AutoCountError):
+    """AutoCount answered with a non-2xx status.
+
+    Carries the HTTP status code as ``status_code`` and a sanitised AutoCount
+    message when the error body provides one.
+    """
+
+    def __init__(self, status_code: int, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.status_code}, {self._safe_message!r})"
+
+
+class AutoCountTransportError(AutoCountError):
+    """The request failed before an HTTP response was received.
+
+    Raised for read timeouts and any other ``httpx.RequestError``.
+    """
+
+
+class AutoCountAmbiguousWriteError(AutoCountError):
+    """A write request timed out; AutoCount may or may not have applied it."""
