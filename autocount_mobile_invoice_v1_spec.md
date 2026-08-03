@@ -4,6 +4,30 @@
 **Status:** Approved V1 design  
 **Primary users:** Wanson Enterprise and Wanson Enterprise (M) Sdn Bhd operations
 
+## Current Launch Slice — Private ChatGPT Invoice GPT
+
+The first usable release is a private Custom GPT opened from the ChatGPT mobile
+app, not the standalone PWA. The backend remains a small HTTPS API, exposed to
+the GPT through a narrow Action schema.
+
+- Company is fixed server-side to Wanson Enterprise (M) Sdn Bhd for this slice.
+- The user sends an order photo and clarifies the customer/items in chat.
+- For each exact customer/item pair, the backend proposes the latest price from
+  a prior non-cancelled AutoCount invoice and identifies the source invoice and
+  date. The user may change that price before confirming.
+- The GPT must show a complete preview and obtain explicit confirmation before
+  calling the issue action.
+- A confirmed request creates and approves the normal AutoCount invoice with
+  `saveApprove: true`. MyInvois/e-Invoice flags remain off and require a
+  separate explicit workflow.
+- The backend verifies the created invoice before returning its official PDF,
+  preferably through a short-lived download URL suitable for ChatGPT mobile.
+- AutoCount credentials stay on the backend. The GPT Action stores only a
+  separate gateway credential.
+
+The existing two-company PWA remains a later delivery target; it is deferred,
+not removed.
+
 ## 1. Objective
 
 Build a fast, mobile-first invoice interface for iPhone that creates real invoices directly in AutoCount Cloud.

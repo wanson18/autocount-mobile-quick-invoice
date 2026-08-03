@@ -4,6 +4,23 @@
 
 **Recommended stack:** Python 3.12+, FastAPI, Pydantic v2, httpx, SQLite for idempotency/audit metadata, pytest, and a mobile PWA front end.
 
+## Current Launch Priority — Private Custom GPT
+
+Deliver the Sdn Bhd-only private GPT workflow before the standalone PWA:
+
+1. Complete invoice mapping, service, reconciliation, and read-back.
+2. Add latest exact customer/item historical-price lookup from prior
+   non-cancelled AutoCount invoices, returning the source invoice/date for the
+   confirmation preview.
+3. Expose narrow preview and confirmed-issue HTTPS endpoints with a Custom GPT
+   Action OpenAPI schema. Keep the Sdn Bhd account book fixed server-side.
+4. Retrieve the official AutoCount PDF and return a short-lived download URL.
+5. Keep `saveApprove: true`, `submitEInvoice: false`, and duplicate protection
+   mandatory. MyInvois remains a separate explicit workflow.
+
+The two-company selector, standalone PWA, and iPhone Share Sheet follow after
+this launch slice works end to end in the ChatGPT mobile app.
+
 ## Proposed Structure
 
 ```text
