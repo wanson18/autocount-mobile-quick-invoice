@@ -8,3 +8,6 @@ __pycache__/
 
 # Environment — account book IDs and credentials are secrets
 .env
+
+# Review artifacts
+review.txt
