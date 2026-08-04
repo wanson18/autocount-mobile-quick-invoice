@@ -9,6 +9,7 @@ specified in the implementation plan. Rules:
 - Rows are inserted as ``pending``. A later ``succeeded`` row is the
   authoritative result; ``pending`` and ``ambiguous`` rows are returned as-is
   so the invoice service reconciles them (Task 8) before replaying.
+- Price overrides are stored separately as non-authoritative audit metadata.
 
 One connection is opened per operation: SQLite serialises writers with file
 locking, so a double-tap from the mobile client cannot create two rows, and a
@@ -21,8 +22,9 @@ accounting data.
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from decimal import Decimal
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -40,6 +42,17 @@ CREATE TABLE IF NOT EXISTS invoice_requests (
   error_message TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS invoice_price_overrides (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  idempotency_key TEXT NOT NULL,
+  autocount_invoice_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  original_unit_price TEXT NOT NULL,
+  issued_unit_price TEXT NOT NULL,
+  recorded_at TEXT NOT NULL,
+  UNIQUE (idempotency_key, item_id)
 );
 """
 
@@ -70,6 +83,8 @@ class InvoiceRequest:
     error_message: str | None
     created_at: str
     updated_at: str
+    # Transient result of begin(); never stored in invoice_requests.
+    is_new: bool = False
 
 
 def _now() -> str:
@@ -92,7 +107,7 @@ class RequestRepository:
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
-            conn.execute(_SCHEMA)
+            conn.executescript(_SCHEMA)
 
     def _fetch(self, key: str) -> InvoiceRequest | None:
         with self._connect() as conn:
@@ -131,12 +146,13 @@ class RequestRepository:
         """
         now = _now()
         with self._connect() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 "INSERT OR IGNORE INTO invoice_requests "
                 "(idempotency_key, company, request_hash, status, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (key, company.value, request_hash, RequestStatus.PENDING.value, now, now),
             )
+            inserted = cursor.rowcount == 1
         existing = self._fetch(key)
         if existing is None:
             raise IdempotencyError(f"idempotency row {key!r} could not be stored")
@@ -144,11 +160,56 @@ class RequestRepository:
             raise IdempotencyConflictError(
                 f"idempotency key {key!r} was already used for a different request"
             )
-        return existing
+        return replace(existing, is_new=inserted)
 
     def get(self, key: str) -> InvoiceRequest | None:
         """Return the stored request for ``key``, or None."""
         return self._fetch(key)
+
+    def record_price_overrides(
+        self,
+        key: str,
+        autocount_invoice_id: str,
+        overrides: tuple[dict[str, Any], ...],
+    ) -> None:
+        """Persist non-authoritative issued-vs-original price metadata."""
+        if self._fetch(key) is None:
+            raise IdempotencyError(f"no idempotency row for key {key!r}")
+        with self._connect() as conn:
+            for override in overrides:
+                conn.execute(
+                    "INSERT OR IGNORE INTO invoice_price_overrides "
+                    "(idempotency_key, autocount_invoice_id, item_id, "
+                    "original_unit_price, issued_unit_price, recorded_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        key,
+                        autocount_invoice_id,
+                        override["item_id"],
+                        str(override["original_unit_price"]),
+                        str(override["issued_unit_price"]),
+                        _now(),
+                    ),
+                )
+
+    def list_price_overrides(self, key: str) -> list[dict[str, Any]]:
+        """Return persisted price override metadata for one request."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT item_id, original_unit_price, issued_unit_price, "
+                "autocount_invoice_id FROM invoice_price_overrides "
+                "WHERE idempotency_key = ? ORDER BY id",
+                (key,),
+            ).fetchall()
+        return [
+            {
+                "item_id": row["item_id"],
+                "original_unit_price": Decimal(row["original_unit_price"]),
+                "issued_unit_price": Decimal(row["issued_unit_price"]),
+                "autocount_invoice_id": row["autocount_invoice_id"],
+            }
+            for row in rows
+        ]
 
     def _transition(
         self,

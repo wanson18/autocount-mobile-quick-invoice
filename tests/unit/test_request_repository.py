@@ -42,6 +42,7 @@ def row_count(db_path):
 
 def test_begin_creates_pending_row(repo):
     request = repo.begin(KEY, CompanyKey.ENTERPRISE, HASH_A)
+    assert request.is_new is True
     assert request.idempotency_key == KEY
     assert request.company is CompanyKey.ENTERPRISE
     assert request.request_hash == HASH_A
@@ -57,6 +58,7 @@ def test_begin_returns_stored_result_for_same_key_and_request(repo):
 
     replayed = repo.begin(KEY, CompanyKey.ENTERPRISE, HASH_A)
 
+    assert replayed.is_new is False
     assert replayed.status is RequestStatus.SUCCEEDED
     assert replayed.autocount_invoice_id == "inv-42"
     assert replayed.autocount_invoice_number == "INV-2026-0001"
@@ -80,6 +82,7 @@ def test_same_key_with_different_company_is_rejected(repo):
 def test_pending_replay_returns_pending_without_success_data(repo):
     repo.begin(KEY, CompanyKey.ENTERPRISE, HASH_A)
     replayed = repo.begin(KEY, CompanyKey.ENTERPRISE, HASH_A)
+    assert replayed.is_new is False
     assert replayed.status is RequestStatus.PENDING
     assert replayed.autocount_invoice_id is None
     assert replayed.autocount_invoice_number is None
