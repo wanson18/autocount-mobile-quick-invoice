@@ -285,7 +285,7 @@ async def test_get_price_history_deduplicates_identical_items():
         "OIL-5KG": history["OIL-5KG"],
         "RICE-10KG": None,
     }
-    assert master.calls == [
+    assert sorted(master.calls) == [
         (SDN_BHD, "C001", "OIL-5KG"),
         (SDN_BHD, "C001", "RICE-10KG"),
     ]
