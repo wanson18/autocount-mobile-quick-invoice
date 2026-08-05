@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+*.egg-info/
 
 # Test artifacts
 .pytest_cache/

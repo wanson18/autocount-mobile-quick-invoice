@@ -29,6 +29,7 @@ from app.autocount.errors import (
     AutoCountTransportError,
     AutoCountUnsupportedError,
 )
+from app.config import CompanyConfigError
 from app.repositories.request_repository import IdempotencyConflictError
 from app.services.invoice_service import (
     InvoiceIssuePendingError,
@@ -162,6 +163,13 @@ async def autocount_config_error_handler(
 @app.exception_handler(AutoCountEndpointError)
 async def autocount_endpoint_error_handler(
     request: Request, exc: AutoCountEndpointError
+) -> JSONResponse:
+    return _error(500, "server_configuration_error", str(exc))
+
+
+@app.exception_handler(CompanyConfigError)
+async def company_config_error_handler(
+    request: Request, exc: CompanyConfigError
 ) -> JSONResponse:
     return _error(500, "server_configuration_error", str(exc))
 

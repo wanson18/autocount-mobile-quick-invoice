@@ -389,6 +389,23 @@ def test_preview_empty_item_ids_is_422_with_field_path(api):
     )
 
 
+def test_missing_company_config_is_clear_500_not_internal_error(api, monkeypatch):
+    for var in (
+        "AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE",
+        "AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD",
+        "AUTOCOUNT_API_KEY_ID",
+        "AUTOCOUNT_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    client, _, _ = api
+    response = client.get("/api/companies")
+    assert response.status_code == 500
+    assert response.json()["error"] == "server_configuration_error"
+    # Companies load in CompanyKey order, so enterprise is the first failure
+    # reported; the message must name the missing env var, not hide it.
+    assert "AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE" in response.json()["message"]
+
+
 def test_openapi_schema_has_operation_ids_and_consequential_flag(api):
     client, _, _ = api
     schema = client.get("/openapi.json").json()
