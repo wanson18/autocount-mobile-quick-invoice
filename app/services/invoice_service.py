@@ -1,11 +1,27 @@
-"""Create one approved AutoCount invoice from a confirmed mobile draft."""
+"""Create one approved AutoCount invoice from a confirmed mobile draft.
+
+Idempotency and ambiguity:
+
+- The same idempotency key with the same payload returns the stored result.
+- A ``pending`` request is never replayed; it needs reconciliation.
+- An ``ambiguous`` request (a write that timed out) is reconciled against
+  AutoCount before any other action: the adapter searches the account book for
+  invoices of the same customer created within a narrow window around the
+  ambiguity timestamp, and the draft is matched on customer, date, exact line
+  multiset, and non-cancelled status. Exactly one match resolves the request;
+  zero matches marks it failed (retry with a new key); several matches require
+  manual reconciliation. AutoCount is never called twice to create the same
+  invoice.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Protocol
 
@@ -14,12 +30,20 @@ from app.autocount.mapping import map_invoice_payload
 from app.config import CompanyConfig
 from app.models.company import CompanyKey
 from app.models.invoice import InvoiceDraftInput
-from app.models.master_data import CustomerSummary, DeliveryAddress, ProductSummary
+from app.models.master_data import (
+    CustomerSummary,
+    DeliveryAddress,
+    InvoiceSummary,
+    ProductSummary,
+)
 from app.repositories.request_repository import (
     InvoiceRequest,
     RequestRepository,
     RequestStatus,
 )
+
+#: How wide a creation-time window is searched when reconciling an ambiguous write.
+RECONCILE_WINDOW = timedelta(hours=1)
 
 
 class MasterDataPort(Protocol):
@@ -34,6 +58,15 @@ class MasterDataPort(Protocol):
     async def get_item(
         self, company: CompanyConfig, item_id: str
     ) -> ProductSummary: ...
+
+    async def search_invoices(
+        self,
+        company: CompanyConfig,
+        *,
+        customer_id: str,
+        date_from: str,
+        date_to: str,
+    ) -> list[InvoiceSummary]: ...
 
 
 class AutoCountWritePort(Protocol):
@@ -64,6 +97,20 @@ class InvoiceValidationError(InvoiceServiceError):
 
 class InvoiceIssuePendingError(InvoiceServiceError):
     """An earlier request owns this idempotency key and needs reconciliation."""
+
+
+class InvoiceReconciliationError(InvoiceServiceError):
+    """An ambiguous write could not be resolved to exactly one AutoCount invoice.
+
+    ``candidates`` lists the matching AutoCount document numbers when several
+    invoices match the draft; it is empty when none matched. Zero matches means
+    the write was not applied and a new idempotency key is required; several
+    matches require manual reconciliation inside AutoCount.
+    """
+
+    def __init__(self, message: str, *, candidates: tuple[str, ...] = ()) -> None:
+        super().__init__(message)
+        self.candidates = candidates
 
 
 class EInvoiceStatus(str, Enum):
@@ -115,9 +162,11 @@ class InvoiceService:
         if not request.is_new:
             if request.status is RequestStatus.SUCCEEDED:
                 return self._result_from_request(request, draft)
-            if request.status in {RequestStatus.PENDING, RequestStatus.AMBIGUOUS}:
+            if request.status is RequestStatus.AMBIGUOUS:
+                return await self._reconcile_ambiguous(draft, company, request)
+            if request.status is RequestStatus.PENDING:
                 raise InvoiceIssuePendingError(
-                    f"invoice request is {request.status.value}; reconcile it before retrying"
+                    "invoice request is pending; reconcile it before retrying"
                 )
             raise InvoiceServiceError(request.error_message or "invoice request failed")
 
@@ -140,21 +189,7 @@ class InvoiceService:
             self.requests.mark_failed(draft.idempotency_key, str(exc))
             raise
 
-        self.requests.mark_succeeded(draft.idempotency_key, invoice_id, invoice_number)
-        price_overrides = self._price_overrides(draft)
-        self.requests.record_price_overrides(
-            draft.idempotency_key, invoice_id, price_overrides
-        )
-        einvoice_result = await self._request_einvoice(
-            draft, company, invoice_id, invoice_number
-        )
-        return self._result(
-            draft,
-            invoice_id,
-            invoice_number,
-            price_overrides,
-            einvoice_result,
-        )
+        return await self._complete_issue(draft, company, invoice_id, invoice_number)
 
     def _resolve_company(self, draft: InvoiceDraftInput) -> CompanyConfig:
         company = self.company_resolver(draft.company)
@@ -202,6 +237,113 @@ class InvoiceService:
                 )
             products[line.item_id] = product
         return products
+
+    async def _complete_issue(
+        self,
+        draft: InvoiceDraftInput,
+        company: CompanyConfig,
+        invoice_id: str,
+        invoice_number: str,
+    ) -> InvoiceCreateResult:
+        """Record a confirmed AutoCount invoice and produce the result.
+
+        Shared by the direct create path and the reconciliation path so both
+        mark success, store price overrides, and request e-Invoice processing
+        in exactly the same order.
+        """
+        self.requests.mark_succeeded(draft.idempotency_key, invoice_id, invoice_number)
+        price_overrides = self._price_overrides(draft)
+        self.requests.record_price_overrides(
+            draft.idempotency_key, invoice_id, price_overrides
+        )
+        einvoice_result = await self._request_einvoice(
+            draft, company, invoice_id, invoice_number
+        )
+        return self._result(
+            draft,
+            invoice_id,
+            invoice_number,
+            price_overrides,
+            einvoice_result,
+        )
+
+    async def _reconcile_ambiguous(
+        self,
+        draft: InvoiceDraftInput,
+        company: CompanyConfig,
+        request: InvoiceRequest,
+    ) -> InvoiceCreateResult:
+        """Resolve a timed-out write against AutoCount before anything else.
+
+        Searches the account book for invoices of the same customer created
+        within ``RECONCILE_WINDOW`` around the moment the ambiguity was
+        recorded (``request.updated_at``), then keeps only invoices matching
+        the confirmed draft exactly. A single match completes the request and
+        is returned without ever repeating the create call; zero matches marks
+        the request failed so the caller can retry with a new idempotency key;
+        several matches require manual reconciliation and are reported with
+        their document numbers.
+        """
+        try:
+            ambiguous_at = datetime.fromisoformat(request.updated_at)
+        except ValueError:
+            raise InvoiceReconciliationError(
+                "stored ambiguous request has an unreadable timestamp"
+            ) from None
+        candidates = [
+            invoice
+            for invoice in await self.master_data.search_invoices(
+                company,
+                customer_id=draft.customer_id,
+                date_from=(ambiguous_at - RECONCILE_WINDOW).isoformat(),
+                date_to=(ambiguous_at + RECONCILE_WINDOW).isoformat(),
+            )
+            if self._invoice_matches(invoice, draft)
+        ]
+        if len(candidates) == 1:
+            invoice = candidates[0]
+            return await self._complete_issue(
+                draft, company, invoice.id, invoice.doc_no
+            )
+        if not candidates:
+            message = (
+                "no AutoCount invoice matching the draft was found; the timed-out "
+                "write was not applied, retry with a new idempotency key"
+            )
+            self.requests.mark_failed(draft.idempotency_key, message)
+            raise InvoiceReconciliationError(message)
+        raise InvoiceReconciliationError(
+            "multiple AutoCount invoices match the draft; manual reconciliation is required",
+            candidates=tuple(invoice.doc_no for invoice in candidates),
+        )
+
+    @staticmethod
+    def _invoice_matches(
+        invoice: InvoiceSummary, draft: InvoiceDraftInput
+    ) -> bool:
+        """True when AutoCount's invoice equals the confirmed draft exactly.
+
+        Compares the customer, the document date, the cancelled flag, and the
+        full detail multiset (product code, quantity, unit price). A multiset
+        comparison absorbs AutoCount line ordering, and exact line equality
+        also fixes the pre-tax subtotal, so no separate total check is needed.
+        """
+        if invoice.is_cancelled:
+            return False
+        if invoice.debtor_code != draft.customer_id:
+            return False
+        if invoice.doc_date != draft.invoice_date.isoformat():
+            return False
+        if len(invoice.lines) != len(draft.lines):
+            return False
+        expected = Counter(
+            (line.item_id, line.quantity, line.unit_price) for line in draft.lines
+        )
+        actual = Counter(
+            (line.product_code, line.qty, line.unit_price)
+            for line in invoice.lines
+        )
+        return expected == actual
 
     async def _request_einvoice(
         self,

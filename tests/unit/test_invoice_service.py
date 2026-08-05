@@ -63,6 +63,10 @@ class FakeMasterData:
             raise AssertionError(f"unexpected item lookup: {item_id}")
         return self.product
 
+    async def search_invoices(self, company, *, customer_id, date_from, date_to):
+        self.calls.append(("invoices", company, customer_id, date_from, date_to))
+        return []
+
 
 class FakeClient:
     def __init__(self, response=None, error=None):

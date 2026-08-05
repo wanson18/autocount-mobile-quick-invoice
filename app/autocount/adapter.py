@@ -14,6 +14,8 @@ Normalisation and isolation:
   ``price`` (numeric string or number; never a binary float).
 - A delivery address is owned by its customer: the stable adapter ID is
   ``"<customer_id>:delivery"`` and a mismatched debtor is rejected.
+- An invoice's identity is its AutoCount document key (``docKey``); invoice
+  listing rows carry the documented ``master``/``details`` view-model shape.
 - Malformed or inconsistent 2xx payloads fail closed with
   ``AutoCountDataError``, whose messages never include the raw body.
   ``AutoCountRejectedError`` and transport errors propagate unchanged.
@@ -31,7 +33,13 @@ from typing import Any, Callable
 from app.autocount.client import AutoCountClient
 from app.autocount.errors import AutoCountDataError
 from app.config import CompanyConfig
-from app.models.master_data import CustomerSummary, DeliveryAddress, ProductSummary
+from app.models.master_data import (
+    CustomerSummary,
+    DeliveryAddress,
+    InvoiceLineSummary,
+    InvoiceSummary,
+    ProductSummary,
+)
 
 DEFAULT_ADDRESS_LABEL = "Default delivery address"
 _LISTING_PAGE_LIMIT = 1000
@@ -122,6 +130,49 @@ class AutoCountMasterDataAdapter:
             extract=self._product_row,
         )
         return self._filter(summaries, query)
+
+    async def search_invoices(
+        self,
+        company: CompanyConfig,
+        *,
+        customer_id: str,
+        date_from: str,
+        date_to: str,
+    ) -> list[InvoiceSummary]:
+        """Invoices for one customer whose creation time falls in the window.
+
+        Uses the documented invoice listing filter ``debtorCode`` (multiSelect)
+        and ``createdDate`` (from/to) so only the narrow reconciliation window
+        is fetched; line-level and total matching are the caller's job because
+        the listing API has no item-level filter.
+
+        Each row is the documented invoice view model directly (``master`` +
+        ``details``, unlike product rows which wrap under ``product``). An
+        invoice is normalised to ``InvoiceSummary``; the document key
+        (``docKey``) is the stable identity, and the detail multiset is
+        preserved exactly so a caller can match against a confirmed draft.
+        """
+        customer_id = self._validate_id(customer_id, "customer_id")
+        date_from = self._validate_id(date_from, "date_from")
+        date_to = self._validate_id(date_to, "date_to")
+
+        def body_for(page: int) -> dict[str, Any]:
+            return {
+                "page": page,
+                "filter": {
+                    "debtorCode": {"multiSelect": [customer_id]},
+                    "createdDate": {"from": date_from, "to": date_to},
+                },
+            }
+
+        return await self._listing(
+            company,
+            "POST",
+            "invoice/listing",
+            params_for=None,
+            body_for=body_for,
+            extract=self._invoice_row,
+        )
 
     async def get_item(
         self, company: CompanyConfig, item_id: str
@@ -287,6 +338,82 @@ class AutoCountMasterDataAdapter:
         if not price.is_finite() or price < 0:
             raise AutoCountDataError("AutoCount product has an unsafe price")
         return price
+
+    @classmethod
+    def _invoice_row(cls, row: Any) -> InvoiceSummary:
+        if not isinstance(row, dict):
+            raise AutoCountDataError("AutoCount invoice listing contains a malformed row")
+        master = row.get("master")
+        if not isinstance(master, dict):
+            raise AutoCountDataError("AutoCount invoice row is missing its master data")
+        doc_key = master.get("docKey")
+        if (
+            doc_key is None
+            or isinstance(doc_key, bool)
+            or not isinstance(doc_key, (int, str))
+        ):
+            raise AutoCountDataError("AutoCount invoice is missing its document key")
+        invoice_id = str(doc_key).strip()
+        if not invoice_id:
+            raise AutoCountDataError("AutoCount invoice has a blank document key")
+        details = row.get("details")
+        if not isinstance(details, list):
+            raise AutoCountDataError("AutoCount invoice row is missing its details")
+        return InvoiceSummary(
+            id=invoice_id,
+            doc_no=cls._pick(master, "docNo", "DocNo", "document number"),
+            doc_date=cls._pick(master, "docDate", "DocDate", "document date"),
+            debtor_code=cls._pick(master, "debtorCode", "DebtorCode", "debtor code"),
+            total=cls._invoice_total(master),
+            lines=tuple(cls._invoice_detail(detail) for detail in details),
+            is_cancelled=cls._invoice_cancelled(master),
+        )
+
+    @classmethod
+    def _invoice_detail(cls, detail: Any) -> InvoiceLineSummary:
+        if not isinstance(detail, dict):
+            raise AutoCountDataError("AutoCount invoice detail row is malformed")
+        return InvoiceLineSummary(
+            product_code=cls._pick(detail, "productCode", "ProductCode", "product code"),
+            qty=cls._strict_decimal(
+                detail.get("qty"), "invoice quantity", must_be_positive=True
+            ),
+            unit_price=cls._strict_decimal(
+                detail.get("unitPrice"), "invoice unit price", must_be_positive=False
+            ),
+        )
+
+    @staticmethod
+    def _invoice_total(master: dict[str, Any]) -> Decimal:
+        return AutoCountMasterDataAdapter._strict_decimal(
+            master.get("total"), "invoice total", must_be_positive=False
+        )
+
+    @staticmethod
+    def _invoice_cancelled(master: dict[str, Any]) -> bool:
+        raw = master.get("cancelled")
+        if raw is None:
+            return False
+        if not isinstance(raw, bool):
+            raise AutoCountDataError("AutoCount invoice has a malformed cancelled flag")
+        return raw
+
+    @staticmethod
+    def _strict_decimal(
+        raw: Any, what: str, *, must_be_positive: bool
+    ) -> Decimal:
+        """Exact finite ``Decimal`` from a documented numeric field, fail closed."""
+        if raw is None or isinstance(raw, bool):
+            raise AutoCountDataError(f"AutoCount {what} is missing or invalid")
+        try:
+            value = Decimal(str(raw))
+        except (decimal.InvalidOperation, ValueError):
+            raise AutoCountDataError(f"AutoCount {what} is malformed") from None
+        if not value.is_finite():
+            raise AutoCountDataError(f"AutoCount {what} is not finite")
+        if value < 0 or (must_be_positive and value <= 0):
+            raise AutoCountDataError(f"AutoCount {what} is unsafe")
+        return value
 
     @staticmethod
     def _pick(

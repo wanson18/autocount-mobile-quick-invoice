@@ -9,6 +9,7 @@ Identity rules:
 
 - A customer's identity is its AutoCount code: ``id == code``.
 - A product's identity is its AutoCount lookup code: ``id == code``.
+- An invoice's identity is its AutoCount document key (``docKey``).
 - ``default_price`` is always an exact ``Decimal``, never a binary float.
 """
 
@@ -47,3 +48,31 @@ class ProductSummary:
     code: str
     name: str
     default_price: Decimal
+
+
+@dataclass(frozen=True)
+class InvoiceLineSummary:
+    """One detail line of an existing AutoCount invoice."""
+
+    product_code: str
+    qty: Decimal
+    unit_price: Decimal
+
+
+@dataclass(frozen=True)
+class InvoiceSummary:
+    """An existing AutoCount invoice in the selected account book.
+
+    ``id`` is the AutoCount document key (``docKey`` in the view model).
+    ``lines`` is the exact detail multiset AutoCount stored. ``total`` is the
+    pre-tax subtotal AutoCount computed. Cancelled/voided invoices are flagged
+    with ``is_cancelled`` so price history and reconciliation can exclude them.
+    """
+
+    id: str
+    doc_no: str
+    doc_date: str
+    debtor_code: str
+    total: Decimal
+    lines: tuple[InvoiceLineSummary, ...]
+    is_cancelled: bool = False
