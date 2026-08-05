@@ -7,10 +7,14 @@ from app.models.invoice import InvoiceDraftInput
 from app.models.master_data import CustomerSummary, DeliveryAddress, ProductSummary
 
 #: Wanson issues every quick-invoice on the same standard terms: cash on
-#: delivery, out of the single HQ sales location. Confirmed with the business
-#: owner (not derived from AutoCount) because these aren't per-customer here.
+#: delivery, out of the single HQ sales location, posted to the one trade
+#: debtors AR account. Confirmed with the business owner (not derived from
+#: AutoCount) because these aren't per-customer here. autoFillOption.accNo
+#: alone was not enough for AutoCount to resolve AccNo on invoice create, so
+#: it is sent explicitly too.
 DEFAULT_CREDIT_TERM = "COD"
 DEFAULT_SALES_LOCATION = "HQ"
+DEFAULT_ACC_NO = "300-0000"
 
 
 def map_invoice_payload(
@@ -62,6 +66,7 @@ def map_invoice_payload(
             "deliverAddress": delivery_address.address_text.strip(),
             "creditTerm": DEFAULT_CREDIT_TERM,
             "salesLocation": DEFAULT_SALES_LOCATION,
+            "accNo": DEFAULT_ACC_NO,
             "submitEInvoice": False,
             "submitConsolidatedEInvoice": False,
         },

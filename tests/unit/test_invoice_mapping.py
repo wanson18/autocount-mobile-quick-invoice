@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 
 from app.autocount.mapping import (
+    DEFAULT_ACC_NO,
     DEFAULT_CREDIT_TERM,
     DEFAULT_SALES_LOCATION,
     map_invoice_payload,
@@ -82,6 +83,7 @@ def test_maps_confirmed_draft_to_approved_invoice_payload():
             "deliverAddress": "1, Jalan Example\n31450 Ipoh",
             "creditTerm": DEFAULT_CREDIT_TERM,
             "salesLocation": DEFAULT_SALES_LOCATION,
+            "accNo": DEFAULT_ACC_NO,
             "submitEInvoice": False,
             "submitConsolidatedEInvoice": False,
         },
@@ -111,10 +113,12 @@ def test_maps_confirmed_draft_to_approved_invoice_payload():
 
 def test_default_credit_term_and_sales_location_are_wanson_standard_terms():
     """Wanson issues every quick-invoice on the same terms (confirmed with the
-    business owner): cash on delivery, out of the single HQ sales location.
-    These are not derived per-customer from AutoCount."""
+    business owner): cash on delivery, out of the single HQ sales location,
+    posted to the one trade debtors AR account. These are not derived
+    per-customer from AutoCount."""
     assert DEFAULT_CREDIT_TERM == "COD"
     assert DEFAULT_SALES_LOCATION == "HQ"
+    assert DEFAULT_ACC_NO == "300-0000"
 
 
 def test_original_price_and_client_only_fields_never_reach_autocount():
