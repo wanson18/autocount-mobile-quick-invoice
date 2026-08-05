@@ -1,1 +1,783 @@
-PLACEHOLDER_INDEX_HTML
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="theme-color" content="#0f172a" />
+<title>Quick Invoice — Wanson</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-2: #273449;
+    --border: #334155;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #22c55e;
+    --accent-dark: #16a34a;
+    --danger: #ef4444;
+    --warn: #f59e0b;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  #app { max-width: 520px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+
+  header.topbar {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--bg);
+    padding: calc(env(safe-area-inset-top) + 12px) 16px 10px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  header.topbar h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  .step-pill {
+    font-size: 12px; color: var(--muted); background: var(--panel);
+    padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border);
+  }
+
+  main { flex: 1; padding: 14px 16px 100px; }
+  .screen { display: none; animation: fade .15s ease; }
+  .screen.active { display: block; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px);} to { opacity: 1; transform: translateY(0);} }
+
+  .field-label { font-size: 12px; color: var(--muted); margin: 18px 0 6px; text-transform: uppercase; letter-spacing: .04em; }
+  .field-label:first-child { margin-top: 0; }
+
+  input[type="text"], input[type="search"], input[type="number"], input[type="date"], select {
+    width: 100%;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 12px;
+    padding: 14px 14px;
+    font-size: 16px;
+    outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+
+  .company-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .choice-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 14px;
+    text-align: center;
+    font-weight: 600;
+    font-size: 15px;
+    cursor: pointer;
+  }
+  .choice-card.selected { border-color: var(--accent); background: #14532d33; }
+
+  .list { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+  .list-item {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 14px;
+    cursor: pointer;
+  }
+  .list-item:active { background: var(--panel-2); }
+  .list-item .primary { font-weight: 600; font-size: 15px; }
+  .list-item .secondary { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  .list-item.selected { border-color: var(--accent); }
+  .empty-hint { color: var(--muted); font-size: 13.5px; padding: 18px 4px; text-align: center; }
+
+  .selected-summary {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 14px;
+    margin-bottom: 4px;
+    font-size: 13.5px;
+    color: var(--muted);
+  }
+  .selected-summary b { color: var(--text); }
+
+  .line-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    margin-bottom: 10px;
+  }
+  .line-card .line-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .line-card .line-title { font-weight: 600; font-size: 14.5px; }
+  .line-card .line-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .remove-btn {
+    background: transparent; border: none; color: var(--danger);
+    font-size: 13px; padding: 4px 8px; cursor: pointer;
+  }
+  .qty-price-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+  .qty-price-row label { font-size: 11px; color: var(--muted); display: block; margin-bottom: 4px; }
+  .line-total { text-align: right; margin-top: 8px; font-size: 14px; color: var(--accent); font-weight: 600; }
+  .price-hint { font-size: 11.5px; color: var(--warn); margin-top: 4px; }
+
+  .add-item-btn {
+    width: 100%;
+    background: var(--panel);
+    border: 1px dashed var(--border);
+    color: var(--text);
+    border-radius: 12px;
+    padding: 14px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .review-row { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 14.5px; }
+  .review-row:last-child { border-bottom: none; }
+  .review-row .label { color: var(--muted); }
+  .review-total { display: flex; justify-content: space-between; padding: 14px 0 4px; font-size: 18px; font-weight: 700; }
+
+  .status-card { text-align: center; padding: 40px 20px; }
+  .status-icon { font-size: 52px; margin-bottom: 14px; }
+  .status-title { font-size: 19px; font-weight: 700; margin-bottom: 6px; }
+  .status-detail { color: var(--muted); font-size: 14px; line-height: 1.5; }
+  .status-detail b { color: var(--text); }
+
+  footer.actionbar {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: linear-gradient(180deg, transparent, var(--bg) 30%);
+    padding: 14px 16px calc(env(safe-area-inset-bottom) + 14px);
+    display: flex; gap: 10px;
+    max-width: 520px; margin: 0 auto;
+  }
+  button.btn {
+    flex: 1;
+    padding: 15px;
+    border-radius: 12px;
+    border: none;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  button.btn-primary { background: var(--accent); color: #06210f; }
+  button.btn-primary:active { background: var(--accent-dark); }
+  button.btn-primary:disabled { background: #3a4a3f; color: #7a8a80; cursor: not-allowed; }
+  button.btn-secondary { background: var(--panel); color: var(--text); border: 1px solid var(--border); flex: 0 0 88px; }
+
+  .banner {
+    border-radius: 12px; padding: 12px 14px; font-size: 13.5px; margin-bottom: 12px;
+    border: 1px solid var(--border); background: var(--panel);
+  }
+  .banner.error { border-color: var(--danger); background: #7f1d1d33; color: #fecaca; }
+  .banner.warn { border-color: var(--warn); background: #78350f33; color: #fde68a; }
+
+  .spinner {
+    display: inline-block; width: 14px; height: 14px; border: 2px solid #06210f55;
+    border-top-color: #06210f; border-radius: 50%; animation: spin .6s linear infinite; vertical-align: -2px; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <h1 id="header-title">Quick Invoice</h1>
+    <span class="step-pill" id="step-pill">Step 1 of 5</span>
+  </header>
+
+  <main>
+    <div id="banner-slot"></div>
+
+    <!-- Screen 1: Company -->
+    <section class="screen active" data-screen="company">
+      <div class="field-label">Select company</div>
+      <div class="company-grid" id="company-grid"></div>
+    </section>
+
+    <!-- Screen 2: Customer + address -->
+    <section class="screen" data-screen="customer">
+      <div class="field-label">Search customer</div>
+      <input type="search" id="customer-search" placeholder="Type customer name or code..." autocomplete="off" />
+      <div class="list" id="customer-list"></div>
+
+      <div id="address-section" style="display:none;">
+        <div class="field-label">Delivery address</div>
+        <div class="list" id="address-list"></div>
+      </div>
+    </section>
+
+    <!-- Screen 3: Items -->
+    <section class="screen" data-screen="items">
+      <div class="selected-summary" id="items-context"></div>
+      <div class="field-label">Invoice date</div>
+      <input type="date" id="invoice-date" />
+
+      <div class="field-label">Items</div>
+      <div id="line-list"></div>
+      <button class="add-item-btn" id="add-item-btn">+ Add item</button>
+
+      <!-- item picker (inline, appears below when adding) -->
+      <div id="item-picker" style="display:none; margin-top:14px;">
+        <input type="search" id="item-search" placeholder="Search item code or name..." autocomplete="off" />
+        <div class="list" id="item-search-list"></div>
+      </div>
+    </section>
+
+    <!-- Screen 4: Review -->
+    <section class="screen" data-screen="review">
+      <div class="selected-summary" id="review-context"></div>
+      <div class="field-label">Line items</div>
+      <div id="review-lines"></div>
+      <div class="review-total">
+        <span>Total</span>
+        <span id="review-total-amount">RM 0.00</span>
+      </div>
+    </section>
+
+    <!-- Screen 5: Result -->
+    <section class="screen" data-screen="result">
+      <div class="status-card" id="result-card"></div>
+    </section>
+  </main>
+
+  <footer class="actionbar" id="actionbar">
+    <button class="btn btn-secondary" id="back-btn">Back</button>
+    <button class="btn btn-primary" id="next-btn">Next</button>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const API_BASE = "/api";
+  const STEPS = ["company", "customer", "items", "review", "result"];
+  const STEP_TITLES = {
+    company: "Company", customer: "Customer", items: "Items",
+    review: "Review", result: "Done",
+  };
+
+  const state = {
+    stepIndex: 0,
+    company: null,          // { key, name }
+    customer: null,         // { id, code, name }
+    address: null,          // { id, label, address_text }
+    invoiceDate: todayISO(),
+    lines: [],              // [{ item_id, code, name, quantity, unit_price, original_unit_price }]
+    idempotencyKey: null,
+    issuing: false,
+    issueResult: null,      // { invoice_number, ... } | { error }
+  };
+
+  function todayISO() {
+    const d = new Date();
+    return d.toISOString().slice(0, 10);
+  }
+
+  function uuidv4() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    // Fallback for older WebKit without crypto.randomUUID
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+      const r = (Math.random() * 16) | 0;
+      const v = c === "x" ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  }
+
+  // ---------- API helpers ----------
+
+  async function apiGet(path) {
+    const res = await fetch(API_BASE + path);
+    const body = await safeJson(res);
+    if (!res.ok) throw apiError(body, res.status);
+    return body.data;
+  }
+
+  async function apiPost(path, payload) {
+    const res = await fetch(API_BASE + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = await safeJson(res);
+    if (!res.ok) throw apiError(body, res.status);
+    return body.data;
+  }
+
+  async function safeJson(res) {
+    try { return await res.json(); } catch (e) { return {}; }
+  }
+
+  function apiError(body, status) {
+    const err = new Error((body && (body.message || body.error)) || ("Request failed (" + status + ")"));
+    err.status = status;
+    err.body = body;
+    return err;
+  }
+
+  let debounceTimer = null;
+  function debounce(fn, ms) {
+    return function (...args) {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => fn(...args), ms);
+    };
+  }
+
+  function money(value) {
+    const n = typeof value === "string" ? parseFloat(value) : value;
+    if (Number.isNaN(n)) return "0.00";
+    return n.toFixed(2);
+  }
+
+  function decMul(qtyStr, priceStr) {
+    const q = parseFloat(qtyStr || "0");
+    const p = parseFloat(priceStr || "0");
+    if (Number.isNaN(q) || Number.isNaN(p)) return 0;
+    return q * p;
+  }
+
+  // ---------- Rendering ----------
+
+  const screenEls = {};
+  STEPS.forEach((s) => { screenEls[s] = document.querySelector('[data-screen="' + s + '"]'); });
+
+  const headerTitle = document.getElementById("header-title");
+  const stepPill = document.getElementById("step-pill");
+  const bannerSlot = document.getElementById("banner-slot");
+  const backBtn = document.getElementById("back-btn");
+  const nextBtn = document.getElementById("next-btn");
+  const actionbar = document.getElementById("actionbar");
+
+  function showBanner(message, kind) {
+    bannerSlot.innerHTML = "";
+    if (!message) return;
+    const div = document.createElement("div");
+    div.className = "banner " + (kind || "error");
+    div.textContent = message;
+    bannerSlot.appendChild(div);
+  }
+
+  function render() {
+    const current = STEPS[state.stepIndex];
+    STEPS.forEach((s) => screenEls[s].classList.toggle("active", s === current));
+    headerTitle.textContent = STEP_TITLES[current];
+    stepPill.textContent = current === "result" ? "Done" : "Step " + (state.stepIndex + 1) + " of 4";
+    stepPill.style.display = current === "result" ? "none" : "inline-block";
+
+    backBtn.style.display = (current === "company" || current === "result") ? "none" : "block";
+    nextBtn.textContent = current === "review" ? "Issue Invoice" : "Next";
+    nextBtn.disabled = !canAdvance(current);
+    actionbar.style.display = current === "result" ? "none" : "flex";
+
+    if (current === "company") renderCompanyScreen();
+    if (current === "customer") renderCustomerScreen();
+    if (current === "items") renderItemsScreen();
+    if (current === "review") renderReviewScreen();
+    if (current === "result") renderResultScreen();
+  }
+
+  function canAdvance(screen) {
+    if (screen === "company") return !!state.company;
+    if (screen === "customer") return !!(state.customer && state.address);
+    if (screen === "items") return state.lines.length > 0 && allLinesValid();
+    if (screen === "review") return !state.issuing;
+    return true;
+  }
+
+  function allLinesValid() {
+    return state.lines.every((l) => {
+      const q = parseFloat(l.quantity);
+      const p = parseFloat(l.unit_price);
+      return q > 0 && p >= 0 && !Number.isNaN(q) && !Number.isNaN(p);
+    });
+  }
+
+  // ---------- Screen 1: Company ----------
+
+  async function loadCompanies() {
+    const grid = document.getElementById("company-grid");
+    grid.innerHTML = '<div class="empty-hint">Loading...</div>';
+    try {
+      const companies = await apiGet("/companies");
+      grid.innerHTML = "";
+      companies.forEach((c) => {
+        const card = document.createElement("div");
+        card.className = "choice-card" + (state.company && state.company.key === c.key ? " selected" : "");
+        card.textContent = c.name;
+        card.onclick = () => {
+          state.company = c;
+          render();
+        };
+        grid.appendChild(card);
+      });
+    } catch (e) {
+      grid.innerHTML = "";
+      showBanner("Could not load companies: " + e.message);
+    }
+  }
+
+  function renderCompanyScreen() {
+    const grid = document.getElementById("company-grid");
+    [...grid.children].forEach((card) => {
+      const label = card.textContent;
+      card.classList.toggle("selected", !!(state.company && state.company.name === label));
+    });
+  }
+
+  // ---------- Screen 2: Customer + address ----------
+
+  const customerSearchInput = document.getElementById("customer-search");
+  const customerListEl = document.getElementById("customer-list");
+  const addressSection = document.getElementById("address-section");
+  const addressListEl = document.getElementById("address-list");
+
+  const doCustomerSearch = debounce(async function (q) {
+    if (!state.company) return;
+    customerListEl.innerHTML = '<div class="empty-hint">Searching...</div>';
+    try {
+      const results = await apiGet("/" + state.company.key + "/customers?q=" + encodeURIComponent(q));
+      customerListEl.innerHTML = "";
+      if (results.length === 0) {
+        customerListEl.innerHTML = '<div class="empty-hint">No customers found</div>';
+        return;
+      }
+      results.forEach((c) => {
+        const item = document.createElement("div");
+        item.className = "list-item" + (state.customer && state.customer.id === c.id ? " selected" : "");
+        item.innerHTML = '<div class="primary">' + escapeHtml(c.name) + '</div><div class="secondary">' + escapeHtml(c.code) + "</div>";
+        item.onclick = () => selectCustomer(c);
+        customerListEl.appendChild(item);
+      });
+    } catch (e) {
+      customerListEl.innerHTML = "";
+      showBanner("Customer search failed: " + e.message);
+    }
+  }, 300);
+
+  customerSearchInput.addEventListener("input", (e) => doCustomerSearch(e.target.value));
+
+  async function selectCustomer(customer) {
+    state.customer = customer;
+    state.address = null;
+    render();
+    addressListEl.innerHTML = '<div class="empty-hint">Loading addresses...</div>';
+    addressSection.style.display = "block";
+    try {
+      const addresses = await apiGet("/" + state.company.key + "/customers/" + encodeURIComponent(customer.id) + "/addresses");
+      addressListEl.innerHTML = "";
+      if (addresses.length === 0) {
+        addressListEl.innerHTML = '<div class="empty-hint">No delivery addresses on file</div>';
+        return;
+      }
+      addresses.forEach((a) => {
+        const item = document.createElement("div");
+        item.className = "list-item";
+        item.innerHTML = '<div class="primary">' + escapeHtml(a.label) + '</div><div class="secondary">' + escapeHtml(a.address_text) + "</div>";
+        item.onclick = () => {
+          state.address = a;
+          render();
+        };
+        addressListEl.appendChild(item);
+      });
+    } catch (e) {
+      addressListEl.innerHTML = "";
+      showBanner("Could not load addresses: " + e.message);
+    }
+  }
+
+  function renderCustomerScreen() {
+    [...customerListEl.children].forEach((el) => {
+      if (!el.dataset) return;
+    });
+    if (state.customer) {
+      addressSection.style.display = "block";
+      [...addressListEl.children].forEach((el, i) => {});
+    }
+  }
+
+  // ---------- Screen 3: Items ----------
+
+  const itemsContext = document.getElementById("items-context");
+  const invoiceDateInput = document.getElementById("invoice-date");
+  const lineListEl = document.getElementById("line-list");
+  const addItemBtn = document.getElementById("add-item-btn");
+  const itemPicker = document.getElementById("item-picker");
+  const itemSearchInput = document.getElementById("item-search");
+  const itemSearchList = document.getElementById("item-search-list");
+
+  invoiceDateInput.value = state.invoiceDate;
+  invoiceDateInput.addEventListener("change", (e) => { state.invoiceDate = e.target.value; });
+
+  addItemBtn.addEventListener("click", () => {
+    itemPicker.style.display = itemPicker.style.display === "none" ? "block" : "none";
+    itemSearchInput.value = "";
+    itemSearchList.innerHTML = "";
+    if (itemPicker.style.display === "block") itemSearchInput.focus();
+  });
+
+  const doItemSearch = debounce(async function (q) {
+    if (!state.company) return;
+    itemSearchList.innerHTML = '<div class="empty-hint">Searching...</div>';
+    try {
+      const results = await apiGet("/" + state.company.key + "/products?q=" + encodeURIComponent(q));
+      itemSearchList.innerHTML = "";
+      if (results.length === 0) {
+        itemSearchList.innerHTML = '<div class="empty-hint">No items found</div>';
+        return;
+      }
+      results.forEach((p) => {
+        const item = document.createElement("div");
+        item.className = "list-item";
+        item.innerHTML = '<div class="primary">' + escapeHtml(p.name) + '</div><div class="secondary">' + escapeHtml(p.code) + " · RM " + money(p.default_price) + "</div>";
+        item.onclick = () => addLine(p);
+        itemSearchList.appendChild(item);
+      });
+    } catch (e) {
+      itemSearchList.innerHTML = "";
+      showBanner("Item search failed: " + e.message);
+    }
+  }, 300);
+
+  itemSearchInput.addEventListener("input", (e) => doItemSearch(e.target.value));
+
+  async function addLine(product) {
+    const line = {
+      item_id: product.id,
+      code: product.code,
+      name: product.name,
+      quantity: "1",
+      unit_price: product.default_price,
+      original_unit_price: product.default_price,
+      priceSource: "default",
+    };
+    state.lines.push(line);
+    itemPicker.style.display = "none";
+    render();
+    fetchPriceHistoryFor(line);
+  }
+
+  async function fetchPriceHistoryFor(line) {
+    if (!state.customer) return;
+    try {
+      const data = await apiPost("/invoices/preview", {
+        company: state.company.key,
+        customer_id: state.customer.id,
+        item_ids: [line.item_id],
+      });
+      const entry = (data.items || [])[0];
+      if (entry && entry.latest_unit_price) {
+        line.unit_price = entry.latest_unit_price;
+        line.original_unit_price = entry.latest_unit_price;
+        line.priceSource = "history";
+        line.priceSourceLabel = "Last sold " + entry.source_invoice_date + " (" + entry.source_invoice_number + ")";
+        renderItemsScreen();
+      }
+    } catch (e) {
+      // Price history is advisory; silently keep the default price on failure.
+    }
+  }
+
+  function removeLine(index) {
+    state.lines.splice(index, 1);
+    render();
+  }
+
+  function renderItemsScreen() {
+    itemsContext.innerHTML =
+      "<b>" + escapeHtml(state.company.name) + "</b> · " +
+      escapeHtml(state.customer.name) + "<br>" +
+      escapeHtml(state.address.label);
+
+    lineListEl.innerHTML = "";
+    state.lines.forEach((line, index) => {
+      const card = document.createElement("div");
+      card.className = "line-card";
+      const total = decMul(line.quantity, line.unit_price);
+      card.innerHTML =
+        '<div class="line-head">' +
+          '<div><div class="line-title">' + escapeHtml(line.name) + '</div>' +
+          '<div class="line-sub">' + escapeHtml(line.code) + '</div></div>' +
+          '<button class="remove-btn" data-idx="' + index + '">Remove</button>' +
+        '</div>' +
+        '<div class="qty-price-row">' +
+          '<div><label>Quantity</label><input type="number" inputmode="decimal" min="0" step="any" class="qty-input" data-idx="' + index + '" value="' + line.quantity + '" /></div>' +
+          '<div><label>Unit Price (RM)</label><input type="number" inputmode="decimal" min="0" step="any" class="price-input" data-idx="' + index + '" value="' + line.unit_price + '" /></div>' +
+        '</div>' +
+        (line.priceSourceLabel ? '<div class="price-hint">' + escapeHtml(line.priceSourceLabel) + '</div>' : '') +
+        '<div class="line-total">RM ' + money(total) + '</div>';
+      lineListEl.appendChild(card);
+    });
+
+    lineListEl.querySelectorAll(".remove-btn").forEach((btn) => {
+      btn.onclick = () => removeLine(parseInt(btn.dataset.idx, 10));
+    });
+    lineListEl.querySelectorAll(".qty-input").forEach((input) => {
+      input.oninput = () => {
+        state.lines[parseInt(input.dataset.idx, 10)].quantity = input.value;
+        nextBtn.disabled = !canAdvance("items");
+        updateLineTotal(input);
+      };
+    });
+    lineListEl.querySelectorAll(".price-input").forEach((input) => {
+      input.oninput = () => {
+        const line = state.lines[parseInt(input.dataset.idx, 10)];
+        line.unit_price = input.value;
+        line.priceSourceLabel = null; // manual override
+        nextBtn.disabled = !canAdvance("items");
+        updateLineTotal(input);
+      };
+    });
+  }
+
+  function updateLineTotal(input) {
+    const card = input.closest(".line-card");
+    const qty = card.querySelector(".qty-input").value;
+    const price = card.querySelector(".price-input").value;
+    card.querySelector(".line-total").textContent = "RM " + money(decMul(qty, price));
+  }
+
+  // ---------- Screen 4: Review ----------
+
+  const reviewContext = document.getElementById("review-context");
+  const reviewLines = document.getElementById("review-lines");
+  const reviewTotalAmount = document.getElementById("review-total-amount");
+
+  function renderReviewScreen() {
+    reviewContext.innerHTML =
+      "<b>" + escapeHtml(state.company.name) + "</b> · " + escapeHtml(state.customer.name) + "<br>" +
+      escapeHtml(state.address.label) + " · " + state.invoiceDate;
+
+    reviewLines.innerHTML = "";
+    let total = 0;
+    state.lines.forEach((line) => {
+      const lineTotal = decMul(line.quantity, line.unit_price);
+      total += lineTotal;
+      const row = document.createElement("div");
+      row.className = "review-row";
+      row.innerHTML =
+        '<span class="label">' + escapeHtml(line.name) + " × " + line.quantity + "</span>" +
+        "<span>RM " + money(lineTotal) + "</span>";
+      reviewLines.appendChild(row);
+    });
+    reviewTotalAmount.textContent = "RM " + money(total);
+  }
+
+  // ---------- Screen 5: Result ----------
+
+  const resultCard = document.getElementById("result-card");
+
+  function renderResultScreen() {
+    if (state.issueResult && state.issueResult.ok) {
+      const r = state.issueResult.data;
+      resultCard.innerHTML =
+        '<div class="status-icon">✅</div>' +
+        '<div class="status-title">Invoice issued</div>' +
+        '<div class="status-detail">Invoice <b>' + escapeHtml(r.invoice_number) + '</b> was created in ' +
+        escapeHtml(state.company.name) + '.<br><br>Open AutoCount to share the PDF.</div>';
+    } else if (state.issueResult && !state.issueResult.ok) {
+      resultCard.innerHTML =
+        '<div class="status-icon">⚠️</div>' +
+        '<div class="status-title">Could not issue invoice</div>' +
+        '<div class="status-detail">' + escapeHtml(state.issueResult.message) + '</div>';
+    }
+  }
+
+  // ---------- Navigation ----------
+
+  backBtn.addEventListener("click", () => {
+    if (state.stepIndex > 0) {
+      state.stepIndex -= 1;
+      showBanner(null);
+      render();
+    }
+  });
+
+  nextBtn.addEventListener("click", async () => {
+    const current = STEPS[state.stepIndex];
+    showBanner(null);
+    if (current === "review") {
+      await issueInvoice();
+      return;
+    }
+    if (current === "items") {
+      itemPicker.style.display = "none";
+    }
+    state.stepIndex += 1;
+    render();
+  });
+
+  async function issueInvoice() {
+    if (state.issuing) return;
+    state.issuing = true;
+    if (!state.idempotencyKey) state.idempotencyKey = uuidv4();
+    nextBtn.disabled = true;
+    nextBtn.innerHTML = '<span class="spinner"></span> Issuing...';
+
+    const payload = {
+      company: state.company.key,
+      invoice_date: state.invoiceDate,
+      customer_id: state.customer.id,
+      delivery_address_id: state.address.id,
+      lines: state.lines.map((l) => ({
+        item_id: l.item_id,
+        quantity: String(l.quantity),
+        unit_price: String(l.unit_price),
+        original_unit_price: String(l.original_unit_price),
+      })),
+      submit_einvoice: false,
+      idempotency_key: state.idempotencyKey,
+    };
+
+    try {
+      const data = await apiPost("/invoices", payload);
+      state.issueResult = { ok: true, data };
+      state.stepIndex = STEPS.indexOf("result");
+      render();
+    } catch (e) {
+      // Same idempotency key is preserved so retrying reuses it — no
+      // duplicate invoice on a second tap after a network hiccup.
+      state.issueResult = { ok: false, message: e.message };
+      state.stepIndex = STEPS.indexOf("result");
+      render();
+      // Let the user try again from the top; a fresh invoice needs a
+      // fresh key only after a definite failure. Reset key on next visit
+      // to items screen if they choose to start over.
+    } finally {
+      state.issuing = false;
+      nextBtn.innerHTML = "Issue Invoice";
+    }
+  }
+
+  function escapeHtml(value) {
+    const div = document.createElement("div");
+    div.textContent = value == null ? "" : String(value);
+    return div.innerHTML;
+  }
+
+  // "Start another invoice" — long-press-free: tapping the header title
+  // on the result screen resets state for a new entry.
+  headerTitle.addEventListener("click", () => {
+    if (STEPS[state.stepIndex] !== "result") return;
+    const keepCompany = state.company;
+    Object.assign(state, {
+      stepIndex: 0, customer: null, address: null, invoiceDate: todayISO(),
+      lines: [], idempotencyKey: null, issuing: false, issueResult: null,
+      company: keepCompany,
+    });
+    invoiceDateInput.value = state.invoiceDate;
+    customerSearchInput.value = "";
+    customerListEl.innerHTML = "";
+    addressSection.style.display = "none";
+    render();
+  });
+
+  // ---------- Init ----------
+
+  loadCompanies();
+  render();
+})();
+</script>
+</body>
+</html>
