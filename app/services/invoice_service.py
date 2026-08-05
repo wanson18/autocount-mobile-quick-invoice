@@ -64,61 +64,33 @@ class MasterDataPort(Protocol):
         company: CompanyConfig,
         *,
         customer_id: str,
-        date_from: str,
-        date_to: str,
+        date_from: datetime,
+        date_to: datetime,
     ) -> list[InvoiceSummary]: ...
-
-
-class AutoCountWritePort(Protocol):
-    async def write(
-        self,
-        company: CompanyConfig,
-        method: str,
-        endpoint: str,
-        *,
-        params: dict[str, Any] | None = None,
-        json: Any | None = None,
-    ) -> Any: ...
 
 
 class EInvoicePort(Protocol):
     async def submit(
         self, company: CompanyConfig, invoice_id: str, invoice_number: str
-    ) -> str | "EInvoiceStatus": ...
+    ) -> Any: ...
 
 
 class InvoiceServiceError(Exception):
-    """Base error for invoice service failures."""
+    """Base class for invoice service errors."""
 
 
 class InvoiceValidationError(InvoiceServiceError):
-    """The selected master data or confirmed draft is not issuable."""
+    """A resolved master-data record does not match the confirmed draft."""
 
 
 class InvoiceIssuePendingError(InvoiceServiceError):
-    """An earlier request owns this idempotency key and needs reconciliation."""
+    """An idempotency key is mid-flight; it must be reconciled before retry."""
 
 
-class InvoiceReconciliationError(InvoiceServiceError):
-    """An ambiguous write could not be resolved to exactly one AutoCount invoice.
-
-    ``candidates`` lists the matching AutoCount document numbers when several
-    invoices match the draft; it is empty when none matched. Zero matches means
-    the write was not applied and a new idempotency key is required; several
-    matches require manual reconciliation inside AutoCount.
-    """
-
-    def __init__(self, message: str, *, candidates: tuple[str, ...] = ()) -> None:
-        super().__init__(message)
-        self.candidates = candidates
-
-
-class EInvoiceStatus(str, Enum):
+class EInvoiceStatus(Enum):
     NOT_REQUESTED = "not_requested"
-    PENDING = "pending"
     SUBMITTED = "submitted"
     ACTION_REQUIRED = "action_required"
-    UNSUPPORTED = "unsupported"
 
 
 @dataclass(frozen=True)
@@ -129,22 +101,21 @@ class EInvoiceResult:
 
 @dataclass(frozen=True)
 class InvoiceCreateResult:
-    company: CompanyKey
     invoice_id: str
     invoice_number: str
-    price_overrides: tuple[dict[str, Any], ...]
     einvoice: EInvoiceResult
+    price_overrides: tuple[dict[str, Any], ...]
 
 
 class InvoiceService:
-    """Validate, create, and record one idempotent AutoCount invoice."""
+    """Coordinates idempotent, validated invoice creation against AutoCount."""
 
     def __init__(
         self,
         *,
         company_resolver: Callable[[CompanyKey], CompanyConfig | None],
         master_data: MasterDataPort,
-        client: AutoCountWritePort,
+        client: Any,
         requests: RequestRepository,
         einvoice: EInvoicePort | None = None,
     ) -> None:
@@ -171,13 +142,13 @@ class InvoiceService:
             raise InvoiceServiceError(request.error_message or "invoice request failed")
 
         try:
-            await self._resolve_customer(company, draft.customer_id)
+            customer = await self._resolve_customer(company, draft.customer_id)
             address = await self._resolve_address(
                 company, draft.customer_id, draft.delivery_address_id
             )
             products = await self._resolve_products(company, draft)
             accounting_draft = draft.model_copy(update={"submit_einvoice": False})
-            payload = map_invoice_payload(accounting_draft, address, products)
+            payload = map_invoice_payload(accounting_draft, customer, address, products)
             response = await self.client.write(
                 company, "POST", "invoice", json=payload
             )
@@ -245,202 +216,132 @@ class InvoiceService:
         invoice_id: str,
         invoice_number: str,
     ) -> InvoiceCreateResult:
-        """Record a confirmed AutoCount invoice and produce the result.
-
-        Shared by the direct create path and the reconciliation path so both
-        mark success, store price overrides, and request e-Invoice processing
-        in exactly the same order.
-        """
-        self.requests.mark_succeeded(draft.idempotency_key, invoice_id, invoice_number)
         price_overrides = self._price_overrides(draft)
-        self.requests.record_price_overrides(
-            draft.idempotency_key, invoice_id, price_overrides
+        for override in price_overrides:
+            self.requests.record_price_override(
+                draft.idempotency_key,
+                item_id=override["item_id"],
+                original_unit_price=override["original_unit_price"],
+                issued_unit_price=override["issued_unit_price"],
+                autocount_invoice_id=invoice_id,
+            )
+
+        einvoice_result = EInvoiceResult(status=EInvoiceStatus.NOT_REQUESTED)
+        if draft.submit_einvoice:
+            if self.einvoice is None:
+                einvoice_result = EInvoiceResult(
+                    status=EInvoiceStatus.ACTION_REQUIRED,
+                    error_message="e-Invoice submission is not configured",
+                )
+            else:
+                try:
+                    status = await self.einvoice.submit(company, invoice_id, invoice_number)
+                    einvoice_result = EInvoiceResult(status=status)
+                except Exception as exc:
+                    einvoice_result = EInvoiceResult(
+                        status=EInvoiceStatus.ACTION_REQUIRED, error_message=str(exc)
+                    )
+
+        self.requests.mark_succeeded(
+            draft.idempotency_key,
+            invoice_id=invoice_id,
+            invoice_number=invoice_number,
+            einvoice_status=einvoice_result.status.value,
+            einvoice_error=einvoice_result.error_message,
         )
-        einvoice_result = await self._request_einvoice(
-            draft, company, invoice_id, invoice_number
+
+        return InvoiceCreateResult(
+            invoice_id=invoice_id,
+            invoice_number=invoice_number,
+            einvoice=einvoice_result,
+            price_overrides=tuple(price_overrides),
         )
-        return self._result(
-            draft,
-            invoice_id,
-            invoice_number,
-            price_overrides,
-            einvoice_result,
+
+    def _price_overrides(self, draft: InvoiceDraftInput) -> list[dict[str, Any]]:
+        overrides = []
+        for line in draft.lines:
+            if line.unit_price != line.original_unit_price:
+                overrides.append(
+                    {
+                        "item_id": line.item_id,
+                        "original_unit_price": line.original_unit_price,
+                        "issued_unit_price": line.unit_price,
+                    }
+                )
+        return overrides
+
+    def _request_hash(self, draft: InvoiceDraftInput) -> str:
+        payload = draft.model_dump(mode="json")
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _result_from_request(
+        self, request: InvoiceRequest, draft: InvoiceDraftInput
+    ) -> InvoiceCreateResult:
+        einvoice_status = EInvoiceStatus(request.einvoice_status or EInvoiceStatus.NOT_REQUESTED.value)
+        price_overrides = tuple(
+            self.requests.list_price_overrides(draft.idempotency_key)
         )
+        return InvoiceCreateResult(
+            invoice_id=request.invoice_id,
+            invoice_number=request.invoice_number,
+            einvoice=EInvoiceResult(
+                status=einvoice_status, error_message=request.einvoice_error
+            ),
+            price_overrides=price_overrides,
+        )
+
+    def _parse_create_response(self, response: Any) -> tuple[str, str]:
+        body = response.json()
+        data = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(data, dict):
+            raise AutoCountDataError("AutoCount invoice creation response is missing its data")
+        invoice_id = data.get("id")
+        invoice_number = data.get("docNo")
+        if not invoice_id or not invoice_number:
+            raise AutoCountDataError("AutoCount invoice creation response is incomplete")
+        return str(invoice_id), str(invoice_number)
 
     async def _reconcile_ambiguous(
-        self,
-        draft: InvoiceDraftInput,
-        company: CompanyConfig,
-        request: InvoiceRequest,
+        self, draft: InvoiceDraftInput, company: CompanyConfig, request: InvoiceRequest
     ) -> InvoiceCreateResult:
-        """Resolve a timed-out write against AutoCount before anything else.
-
-        Searches the account book for invoices of the same customer created
-        within ``RECONCILE_WINDOW`` around the moment the ambiguity was
-        recorded (``request.updated_at``), then keeps only invoices matching
-        the confirmed draft exactly. A single match completes the request and
-        is returned without ever repeating the create call; zero matches marks
-        the request failed so the caller can retry with a new idempotency key;
-        several matches require manual reconciliation and are reported with
-        their document numbers.
-        """
-        try:
-            ambiguous_at = datetime.fromisoformat(request.updated_at)
-        except ValueError:
-            raise InvoiceReconciliationError(
-                "stored ambiguous request has an unreadable timestamp"
-            ) from None
-        candidates = [
+        window_start = request.created_at - RECONCILE_WINDOW
+        window_end = request.created_at + RECONCILE_WINDOW
+        candidates = await self.master_data.search_invoices(
+            company,
+            customer_id=draft.customer_id,
+            date_from=window_start,
+            date_to=window_end,
+        )
+        matches = [
             invoice
-            for invoice in await self.master_data.search_invoices(
-                company,
-                customer_id=draft.customer_id,
-                date_from=(ambiguous_at - RECONCILE_WINDOW).isoformat(),
-                date_to=(ambiguous_at + RECONCILE_WINDOW).isoformat(),
-            )
-            if self._invoice_matches(invoice, draft)
+            for invoice in candidates
+            if not invoice.is_cancelled and self._invoice_matches_draft(invoice, draft)
         ]
-        if len(candidates) == 1:
-            invoice = candidates[0]
-            return await self._complete_issue(
-                draft, company, invoice.id, invoice.doc_no
+        if len(matches) == 1:
+            invoice = matches[0]
+            return await self._complete_issue(draft, company, invoice.id, invoice.doc_no)
+        if len(matches) == 0:
+            self.requests.mark_failed(
+                draft.idempotency_key,
+                "ambiguous write did not create an invoice; retry with a new key",
             )
-        if not candidates:
-            message = (
-                "no AutoCount invoice matching the draft was found; the timed-out "
-                "write was not applied, retry with a new idempotency key"
+            raise InvoiceServiceError(
+                "ambiguous write did not create an invoice; retry with a new key"
             )
-            self.requests.mark_failed(draft.idempotency_key, message)
-            raise InvoiceReconciliationError(message)
-        raise InvoiceReconciliationError(
-            "multiple AutoCount invoices match the draft; manual reconciliation is required",
-            candidates=tuple(invoice.doc_no for invoice in candidates),
+        raise InvoiceServiceError(
+            f"ambiguous write matched {len(matches)} invoices; manual reconciliation required"
         )
 
-    @staticmethod
-    def _invoice_matches(
-        invoice: InvoiceSummary, draft: InvoiceDraftInput
-    ) -> bool:
-        """True when AutoCount's invoice equals the confirmed draft exactly.
-
-        Compares the customer, the document date, the cancelled flag, and the
-        full detail multiset (product code, quantity, unit price). A multiset
-        comparison absorbs AutoCount line ordering, and exact line equality
-        also fixes the pre-tax subtotal, so no separate total check is needed.
-        """
-        if invoice.is_cancelled:
-            return False
+    def _invoice_matches_draft(self, invoice: InvoiceSummary, draft: InvoiceDraftInput) -> bool:
         if invoice.debtor_code != draft.customer_id:
             return False
         if invoice.doc_date != draft.invoice_date.isoformat():
-            return False
-        if len(invoice.lines) != len(draft.lines):
             return False
         expected = Counter(
             (line.item_id, line.quantity, line.unit_price) for line in draft.lines
         )
         actual = Counter(
-            (line.product_code, line.qty, line.unit_price)
-            for line in invoice.lines
+            (line.product_code, line.qty, line.unit_price) for line in invoice.lines
         )
         return expected == actual
-
-    async def _request_einvoice(
-        self,
-        draft: InvoiceDraftInput,
-        company: CompanyConfig,
-        invoice_id: str,
-        invoice_number: str,
-    ) -> EInvoiceResult:
-        if not draft.submit_einvoice:
-            return EInvoiceResult(EInvoiceStatus.NOT_REQUESTED)
-        if self.einvoice is None:
-            return EInvoiceResult(
-                EInvoiceStatus.UNSUPPORTED,
-                "AutoCount e-Invoice processor is not configured",
-            )
-        try:
-            status = await self.einvoice.submit(company, invoice_id, invoice_number)
-            return EInvoiceResult(EInvoiceStatus(status))
-        except Exception as exc:
-            return EInvoiceResult(EInvoiceStatus.ACTION_REQUIRED, str(exc))
-
-    @staticmethod
-    def _request_hash(draft: InvoiceDraftInput) -> str:
-        canonical = json.dumps(
-            draft.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
-        return hashlib.sha256(canonical).hexdigest()
-
-    @staticmethod
-    def _parse_create_response(response: Any) -> tuple[str, str]:
-        try:
-            payload = response.json()
-        except (AttributeError, ValueError):
-            raise AutoCountDataError(
-                "AutoCount invoice create response is not valid JSON"
-            ) from None
-        if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
-            raise AutoCountDataError(
-                "AutoCount invoice create response is missing its data object"
-            )
-        data = payload["data"]
-        invoice_id = data.get("id")
-        invoice_number = data.get("docNo")
-        if not _non_blank_string(invoice_id) or not _non_blank_string(invoice_number):
-            raise AutoCountDataError(
-                "AutoCount invoice create response is missing invoice identity"
-            )
-        return invoice_id.strip(), invoice_number.strip()
-
-    @staticmethod
-    def _price_overrides(draft: InvoiceDraftInput) -> tuple[dict[str, Any], ...]:
-        return tuple(
-            {
-                "item_id": line.item_id,
-                "original_unit_price": line.original_unit_price,
-                "issued_unit_price": line.unit_price,
-            }
-            for line in draft.lines
-            if line.original_unit_price != line.unit_price
-        )
-
-    def _result_from_request(
-        self, request: InvoiceRequest, draft: InvoiceDraftInput
-    ) -> InvoiceCreateResult:
-        if not request.autocount_invoice_id or not request.autocount_invoice_number:
-            raise InvoiceServiceError("stored successful request is missing invoice identity")
-        return self._result(
-            draft,
-            request.autocount_invoice_id,
-            request.autocount_invoice_number,
-            self._price_overrides(draft),
-            EInvoiceResult(
-                EInvoiceStatus.NOT_REQUESTED
-                if not draft.submit_einvoice
-                else EInvoiceStatus.PENDING,
-                "stored invoice e-Invoice state requires read-back"
-                if draft.submit_einvoice
-                else None,
-            ),
-        )
-
-    @staticmethod
-    def _result(
-        draft: InvoiceDraftInput,
-        invoice_id: str,
-        invoice_number: str,
-        price_overrides: tuple[dict[str, Any], ...],
-        einvoice: EInvoiceResult,
-    ) -> InvoiceCreateResult:
-        return InvoiceCreateResult(
-            company=draft.company,
-            invoice_id=invoice_id,
-            invoice_number=invoice_number,
-            price_overrides=price_overrides,
-            einvoice=einvoice,
-        )
-
-
-def _non_blank_string(value: object) -> bool:
-    return isinstance(value, str) and bool(value.strip())

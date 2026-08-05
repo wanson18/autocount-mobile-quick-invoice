@@ -5,10 +5,14 @@ from decimal import Decimal
 
 import pytest
 
-from app.autocount.mapping import map_invoice_payload
+from app.autocount.mapping import (
+    DEFAULT_CREDIT_TERM,
+    DEFAULT_SALES_LOCATION,
+    map_invoice_payload,
+)
 from app.models.company import CompanyKey
 from app.models.invoice import InvoiceDraftInput
-from app.models.master_data import DeliveryAddress, ProductSummary
+from app.models.master_data import CustomerSummary, DeliveryAddress, ProductSummary
 
 
 def make_draft() -> InvoiceDraftInput:
@@ -34,6 +38,10 @@ def make_draft() -> InvoiceDraftInput:
         submit_einvoice=False,
         idempotency_key="request-123",
     )
+
+
+def resolved_customer() -> CustomerSummary:
+    return CustomerSummary(id="700-C001", code="700-C001", name="Restoran Contoh")
 
 
 def resolved_address() -> DeliveryAddress:
@@ -62,13 +70,18 @@ def resolved_products() -> dict[str, ProductSummary]:
 
 
 def test_maps_confirmed_draft_to_approved_invoice_payload():
-    payload = map_invoice_payload(make_draft(), resolved_address(), resolved_products())
+    payload = map_invoice_payload(
+        make_draft(), resolved_customer(), resolved_address(), resolved_products()
+    )
 
     assert payload == {
         "master": {
             "docDate": "2026-08-03",
             "debtorCode": "700-C001",
+            "debtorName": "Restoran Contoh",
             "deliverAddress": "1, Jalan Example\n31450 Ipoh",
+            "creditTerm": DEFAULT_CREDIT_TERM,
+            "salesLocation": DEFAULT_SALES_LOCATION,
             "submitEInvoice": False,
             "submitConsolidatedEInvoice": False,
         },
@@ -96,8 +109,18 @@ def test_maps_confirmed_draft_to_approved_invoice_payload():
     }
 
 
+def test_default_credit_term_and_sales_location_are_wanson_standard_terms():
+    """Wanson issues every quick-invoice on the same terms (confirmed with the
+    business owner): cash on delivery, out of the single HQ sales location.
+    These are not derived per-customer from AutoCount."""
+    assert DEFAULT_CREDIT_TERM == "COD"
+    assert DEFAULT_SALES_LOCATION == "HQ"
+
+
 def test_original_price_and_client_only_fields_never_reach_autocount():
-    payload = map_invoice_payload(make_draft(), resolved_address(), resolved_products())
+    payload = map_invoice_payload(
+        make_draft(), resolved_customer(), resolved_address(), resolved_products()
+    )
     serialised = repr(payload)
 
     assert "original_unit_price" not in serialised
@@ -105,6 +128,13 @@ def test_original_price_and_client_only_fields_never_reach_autocount():
     assert "idempotency" not in serialised
     assert "account_book" not in serialised
     assert "docNo" not in payload["master"]
+
+
+def test_rejects_customer_not_matching_the_confirmed_draft():
+    wrong_customer = CustomerSummary(id="700-X999", code="700-X999", name="Someone Else")
+
+    with pytest.raises(ValueError, match="customer"):
+        map_invoice_payload(make_draft(), wrong_customer, resolved_address(), resolved_products())
 
 
 def test_rejects_address_not_selected_in_the_confirmed_draft():
@@ -115,7 +145,7 @@ def test_rejects_address_not_selected_in_the_confirmed_draft():
     )
 
     with pytest.raises(ValueError, match="delivery address"):
-        map_invoice_payload(make_draft(), wrong_address, resolved_products())
+        map_invoice_payload(make_draft(), resolved_customer(), wrong_address, resolved_products())
 
 
 def test_rejects_missing_or_mismatched_resolved_product():
@@ -129,14 +159,14 @@ def test_rejects_missing_or_mismatched_resolved_product():
     )
 
     with pytest.raises(ValueError, match="OIL-5KG"):
-        map_invoice_payload(draft, resolved_address(), products)
+        map_invoice_payload(draft, resolved_customer(), resolved_address(), products)
 
 
 def test_submit_einvoice_cannot_be_smuggled_into_this_approval_flow():
     draft = make_draft().model_copy(update={"submit_einvoice": True})
 
     with pytest.raises(ValueError, match="e-Invoice"):
-        map_invoice_payload(draft, resolved_address(), resolved_products())
+        map_invoice_payload(draft, resolved_customer(), resolved_address(), resolved_products())
 
 
 def test_qty_and_price_preserve_exact_decimal_precision_beyond_float_safety():
@@ -174,7 +204,7 @@ def test_qty_and_price_preserve_exact_decimal_precision_beyond_float_safety():
         )
     }
 
-    payload = map_invoice_payload(draft, resolved_address(), products)
+    payload = map_invoice_payload(draft, resolved_customer(), resolved_address(), products)
     line = payload["details"][0]
 
     assert line["qty"] == Decimal("2.123456789012345")

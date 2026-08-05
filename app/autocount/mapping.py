@@ -4,11 +4,18 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.models.invoice import InvoiceDraftInput
-from app.models.master_data import DeliveryAddress, ProductSummary
+from app.models.master_data import CustomerSummary, DeliveryAddress, ProductSummary
+
+#: Wanson issues every quick-invoice on the same standard terms: cash on
+#: delivery, out of the single HQ sales location. Confirmed with the business
+#: owner (not derived from AutoCount) because these aren't per-customer here.
+DEFAULT_CREDIT_TERM = "COD"
+DEFAULT_SALES_LOCATION = "HQ"
 
 
 def map_invoice_payload(
     draft: InvoiceDraftInput,
+    customer: CustomerSummary,
     delivery_address: DeliveryAddress,
     products: Mapping[str, ProductSummary],
 ) -> dict[str, Any]:
@@ -21,6 +28,8 @@ def map_invoice_payload(
     """
     if draft.submit_einvoice:
         raise ValueError("e-Invoice submission is a separate workflow")
+    if customer.id != draft.customer_id or customer.code != draft.customer_id:
+        raise ValueError("resolved customer does not match the confirmed draft")
     if delivery_address.id != draft.delivery_address_id:
         raise ValueError("resolved delivery address does not match the confirmed draft")
     if not delivery_address.address_text.strip():
@@ -49,7 +58,10 @@ def map_invoice_payload(
         "master": {
             "docDate": draft.invoice_date.isoformat(),
             "debtorCode": draft.customer_id,
+            "debtorName": customer.name,
             "deliverAddress": delivery_address.address_text.strip(),
+            "creditTerm": DEFAULT_CREDIT_TERM,
+            "salesLocation": DEFAULT_SALES_LOCATION,
             "submitEInvoice": False,
             "submitConsolidatedEInvoice": False,
         },
