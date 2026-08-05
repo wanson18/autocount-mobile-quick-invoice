@@ -83,7 +83,6 @@ def test_maps_confirmed_draft_to_approved_invoice_payload():
             "deliverAddress": "1, Jalan Example\n31450 Ipoh",
             "creditTerm": DEFAULT_CREDIT_TERM,
             "salesLocation": DEFAULT_SALES_LOCATION,
-            "accNo": DEFAULT_ACC_NO,
             "submitEInvoice": False,
             "submitConsolidatedEInvoice": False,
         },
@@ -93,12 +92,14 @@ def test_maps_confirmed_draft_to_approved_invoice_payload():
                 "description": "Cooking Oil 5KG",
                 "qty": Decimal("2"),
                 "unitPrice": Decimal("31.50"),
+                "accNo": DEFAULT_ACC_NO,
             },
             {
                 "productCode": "OIL-2KG",
                 "description": "Cooking Oil 2KG",
                 "qty": Decimal("3.5"),
                 "unitPrice": Decimal("13.20"),
+                "accNo": DEFAULT_ACC_NO,
             },
         ],
         "autoFillOption": {
@@ -118,7 +119,7 @@ def test_default_credit_term_and_sales_location_are_wanson_standard_terms():
     per-customer from AutoCount."""
     assert DEFAULT_CREDIT_TERM == "COD"
     assert DEFAULT_SALES_LOCATION == "HQ"
-    assert DEFAULT_ACC_NO == "300-0000"
+    assert DEFAULT_ACC_NO == "500-0000"
 
 
 def test_original_price_and_client_only_fields_never_reach_autocount():

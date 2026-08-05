@@ -7,14 +7,23 @@ from app.models.invoice import InvoiceDraftInput
 from app.models.master_data import CustomerSummary, DeliveryAddress, ProductSummary
 
 #: Wanson issues every quick-invoice on the same standard terms: cash on
-#: delivery, out of the single HQ sales location, posted to the one trade
-#: debtors AR account. Confirmed with the business owner (not derived from
-#: AutoCount) because these aren't per-customer here. autoFillOption.accNo
-#: alone was not enough for AutoCount to resolve AccNo on invoice create, so
-#: it is sent explicitly too.
+#: delivery, out of the single HQ sales location. Confirmed with the business
+#: owner (not derived from AutoCount) because these aren't per-customer here.
 DEFAULT_CREDIT_TERM = "COD"
 DEFAULT_SALES_LOCATION = "HQ"
-DEFAULT_ACC_NO = "300-0000"
+
+#: AutoCount's Invoice Detail Input Model requires ``accNo`` on every line —
+#: it is the Sales GL account (Chart of Accounts code), NOT a customer/debtor
+#: field, and NOT part of the invoice master (the master model has no accNo
+#: field at all; see
+#: https://accounting-api.autocountcloud.com/documentation/models/invoice/inputmodels/invoice-detail-inputmodel/).
+#: autoFillOption.accNo=true is supposed to auto-resolve this per product via
+#: AutoCount's "Product Posting" setup, but that isn't configured for these
+#: products, so AutoCount still rejects the invoice with "AccNo is required."
+#: Sending it explicitly on every line with Wanson's one sales account
+#: (confirmed with the business owner) works regardless of Product Posting
+#: config.
+DEFAULT_ACC_NO = "500-0000"
 
 
 def map_invoice_payload(
@@ -55,6 +64,8 @@ def map_invoice_payload(
                 # risk silently rounding an exact price/quantity.
                 "qty": line.quantity,
                 "unitPrice": line.unit_price,
+                # Required per-line Sales GL account; see DEFAULT_ACC_NO above.
+                "accNo": DEFAULT_ACC_NO,
             }
         )
 
@@ -66,7 +77,6 @@ def map_invoice_payload(
             "deliverAddress": delivery_address.address_text.strip(),
             "creditTerm": DEFAULT_CREDIT_TERM,
             "salesLocation": DEFAULT_SALES_LOCATION,
-            "accNo": DEFAULT_ACC_NO,
             "submitEInvoice": False,
             "submitConsolidatedEInvoice": False,
         },

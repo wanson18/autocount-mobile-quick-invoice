@@ -145,8 +145,9 @@ async def test_issue_validates_master_data_creates_invoice_and_records_override(
     assert payload["master"]["debtorName"] == "Customer One"
     assert payload["master"]["creditTerm"] == "COD"
     assert payload["master"]["salesLocation"] == "HQ"
-    assert payload["master"]["accNo"] == "300-0000"
+    assert "accNo" not in payload["master"]
     assert payload["details"][0]["unitPrice"] == Decimal("31.50")
+    assert payload["details"][0]["accNo"] == "500-0000"
     assert [call[0] for call in master.calls] == ["customer", "address", "item"]
     assert invoice_service.requests.list_price_overrides("issue-1") == [
         {
