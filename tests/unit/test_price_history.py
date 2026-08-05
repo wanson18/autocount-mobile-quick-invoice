@@ -9,7 +9,7 @@ deduplicates identical items into one adapter call each.
 
 import asyncio
 import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import httpx
@@ -22,7 +22,6 @@ from app.autocount.adapter import (
 )
 from app.config import CompanyConfig
 from app.models.company import CompanyKey
-from app.models.invoice import InvoiceDraftInput
 from app.models.master_data import (
     InvoiceLineSummary,
     InvoiceSummary,
@@ -251,25 +250,6 @@ class FakePriceMaster:
         return self.history.get(item_id)
 
 
-def make_draft(*, items=("OIL-5KG", "OIL-5KG", "RICE-10KG")):
-    return InvoiceDraftInput(
-        company=CompanyKey.SDN_BHD,
-        invoice_date=date(2026, 8, 5),
-        customer_id="C001",
-        delivery_address_id="C001:delivery",
-        lines=[
-            {
-                "item_id": item_id,
-                "quantity": Decimal("1"),
-                "unit_price": Decimal("10.00"),
-                "original_unit_price": Decimal("10.00"),
-            }
-            for item_id in items
-        ],
-        idempotency_key="preview-1",
-    )
-
-
 @pytest.mark.asyncio
 async def test_get_price_history_deduplicates_identical_items():
     history = {
@@ -279,7 +259,9 @@ async def test_get_price_history_deduplicates_identical_items():
     }
     master = FakePriceMaster(history)
 
-    result = await get_price_history(master, SDN_BHD, make_draft())
+    result = await get_price_history(
+        master, SDN_BHD, "C001", ("OIL-5KG", "OIL-5KG", "RICE-10KG")
+    )
 
     assert result == {
         "OIL-5KG": history["OIL-5KG"],
@@ -295,6 +277,6 @@ async def test_get_price_history_deduplicates_identical_items():
 async def test_get_price_history_maps_missing_history_to_none():
     master = FakePriceMaster({})
 
-    result = await get_price_history(master, SDN_BHD, make_draft(items=("OIL-5KG",)))
+    result = await get_price_history(master, SDN_BHD, "C001", ("OIL-5KG",))
 
     assert result == {"OIL-5KG": None}

@@ -43,3 +43,19 @@ class InvoiceDraftInput(BaseModel):
     lines: list[InvoiceLineInput] = Field(min_length=1)
     submit_einvoice: StrictBool = False
     idempotency_key: NonBlankIdentifier
+
+
+class InvoicePreviewInput(BaseModel):
+    """Items to propose historical prices for, before the user confirms.
+
+    Sent by the GPT to obtain the latest issued price per item with its
+    source invoice; the proposal is advisory and the confirmed draft carries
+    the final prices. No price, quantity, date, or idempotency data is
+    accepted here.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    company: CompanyKey
+    customer_id: NonBlankIdentifier
+    item_ids: list[NonBlankIdentifier] = Field(min_length=1)
