@@ -1,1 +1,27 @@
-PLACEHOLDER_PYPROJECT
+[project]
+name = "autocount-mobile-quick-invoice"
+version = "0.1.0"
+description = "Mobile-first invoice-entry front end for AutoCount Cloud"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic>=2",
+    "httpx",
+    # Only imported when POSTGRES_URL/DATABASE_URL is set (see
+    # app/dependencies.py) — required in production on Vercel, where the
+    # idempotency DB must be Postgres because the filesystem is ephemeral.
+    # Kept in base dependencies (not an optional extra) because Vercel's
+    # Python runtime installs only [project.dependencies], not extras.
+    "psycopg[binary]>=3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
