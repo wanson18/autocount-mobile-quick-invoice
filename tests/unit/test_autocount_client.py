@@ -681,6 +681,117 @@ def test_malformed_account_book_ids_fail_closed(bad_id):
     assert calls == []
 
 
+def test_per_company_credentials_override_client_defaults():
+    captured = []
+
+    def handler(request):
+        captured.append(request.headers)
+        return httpx.Response(200, json={})
+
+    client = make_client(handler)
+    overridden = CompanyConfig(
+        key=CompanyKey.SDN_BHD,
+        name="Wanson Enterprise (M) Sdn Bhd",
+        account_book_id=SDN_BHD_AB,
+        key_id="sdn-key-id",
+        api_key="sdn-api-key",
+    )
+
+    async def scenario():
+        await client.read(overridden, "GET", "x")
+
+    autoclose(client, scenario)
+    assert captured[0]["Key-ID"] == "sdn-key-id"
+    assert captured[0]["API-Key"] == "sdn-api-key"
+
+
+def test_company_without_override_falls_back_to_client_credentials():
+    captured = []
+
+    def handler(request):
+        captured.append(request.headers)
+        return httpx.Response(200, json={})
+
+    client = make_client(handler)
+
+    async def scenario():
+        await client.read(ENTERPRISE, "GET", "x")
+
+    autoclose(client, scenario)
+    assert captured[0]["Key-ID"] == KEY_ID
+    assert captured[0]["API-Key"] == API_KEY
+
+
+def test_mixed_companies_use_their_own_credentials_independently():
+    captured = []
+
+    def handler(request):
+        captured.append(request.headers)
+        return httpx.Response(200, json={})
+
+    client = make_client(handler)
+    overridden = CompanyConfig(
+        key=CompanyKey.SDN_BHD,
+        name="Wanson Enterprise (M) Sdn Bhd",
+        account_book_id=SDN_BHD_AB,
+        key_id="sdn-key-id",
+        api_key="sdn-api-key",
+    )
+
+    async def scenario():
+        await client.read(ENTERPRISE, "GET", "x")
+        await client.read(overridden, "GET", "x")
+
+    autoclose(client, scenario)
+    assert captured[0]["Key-ID"] == KEY_ID
+    assert captured[0]["API-Key"] == API_KEY
+    assert captured[1]["Key-ID"] == "sdn-key-id"
+    assert captured[1]["API-Key"] == "sdn-api-key"
+
+
+def test_partial_credential_override_rejected_at_request_time():
+    client = make_client(lambda request: httpx.Response(200, json={}))
+    partial = CompanyConfig(
+        key=CompanyKey.SDN_BHD,
+        name="Wanson Enterprise (M) Sdn Bhd",
+        account_book_id=SDN_BHD_AB,
+        key_id="only-key-id",
+        api_key=None,
+    )
+
+    async def scenario():
+        with pytest.raises(AutoCountConfigError):
+            await client.read(partial, "GET", "x")
+
+    autoclose(client, scenario)
+
+
+def test_per_company_credentials_are_redacted_from_rejection_messages():
+    def handler(request):
+        body = {"statusCode": 401, "message": "unauthorized for sdn-key-id / sdn-api-key-secret"}
+        return httpx.Response(401, json=body)
+
+    client = make_client(handler)
+    overridden = CompanyConfig(
+        key=CompanyKey.SDN_BHD,
+        name="Wanson Enterprise (M) Sdn Bhd",
+        account_book_id=SDN_BHD_AB,
+        key_id="sdn-key-id",
+        api_key="sdn-api-key-secret",
+    )
+
+    async def scenario():
+        with pytest.raises(AutoCountRejectedError) as exc:
+            await client.read(overridden, "GET", "x")
+        return exc
+
+    exc = autoclose(client, scenario)
+    err = exc.value
+    assert "sdn-key-id" not in str(err)
+    assert "sdn-api-key-secret" not in str(err)
+    assert "<redacted>" in str(err)
+
+
 def test_legitimate_account_book_ids_are_preserved_verbatim():
     calls = []
 
