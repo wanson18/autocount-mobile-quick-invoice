@@ -92,6 +92,23 @@
   .list-item.selected { border-color: var(--accent); }
   .empty-hint { color: var(--muted); font-size: 13.5px; padding: 18px 4px; text-align: center; }
 
+  .selected-customer-card {
+    margin-top: 10px;
+    background: var(--panel);
+    border: 1px solid var(--accent);
+    border-radius: 12px;
+    padding: 12px 14px;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  }
+  .selected-customer-card .primary { font-weight: 600; font-size: 15px; }
+  .selected-customer-card .secondary { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  .link-btn {
+    background: none; border: none; color: var(--accent);
+    font-size: 13.5px; font-weight: 600; padding: 6px 4px; cursor: pointer;
+    flex-shrink: 0;
+  }
+  .link-btn:active { opacity: .7; }
+
   .selected-summary {
     background: var(--panel-2);
     border: 1px solid var(--border);
@@ -198,9 +215,22 @@
 
     <!-- Screen 2: Customer + address -->
     <section class="screen" data-screen="customer">
-      <div class="field-label">Search customer</div>
-      <input type="search" id="customer-search" placeholder="Type customer name or code..." autocomplete="off" />
-      <div class="list" id="customer-list"></div>
+      <div id="customer-search-block">
+        <div class="field-label">Search customer</div>
+        <input type="search" id="customer-search" placeholder="Type customer name or code..." autocomplete="off" />
+        <div class="list" id="customer-list"></div>
+      </div>
+
+      <div id="customer-selected-block" style="display:none;">
+        <div class="field-label">Customer</div>
+        <div class="selected-customer-card">
+          <div>
+            <div class="primary" id="selected-customer-name"></div>
+            <div class="secondary" id="selected-customer-code"></div>
+          </div>
+          <button type="button" id="change-customer-btn" class="link-btn">Change</button>
+        </div>
+      </div>
 
       <div id="address-section" style="display:none;">
         <div class="field-label">Delivery address</div>
@@ -432,6 +462,20 @@
   const customerListEl = document.getElementById("customer-list");
   const addressSection = document.getElementById("address-section");
   const addressListEl = document.getElementById("address-list");
+  const customerSearchBlock = document.getElementById("customer-search-block");
+  const customerSelectedBlock = document.getElementById("customer-selected-block");
+  const selectedCustomerName = document.getElementById("selected-customer-name");
+  const selectedCustomerCode = document.getElementById("selected-customer-code");
+  const changeCustomerBtn = document.getElementById("change-customer-btn");
+
+  changeCustomerBtn.addEventListener("click", () => {
+    state.customer = null;
+    state.address = null;
+    addressListEl.innerHTML = "";
+    addressSection.style.display = "none";
+    render();
+    customerSearchInput.focus();
+  });
 
   const doCustomerSearch = debounce(async function (q) {
     if (!state.company) return;
@@ -488,12 +532,16 @@
   }
 
   function renderCustomerScreen() {
-    [...customerListEl.children].forEach((el) => {
-      if (!el.dataset) return;
-    });
     if (state.customer) {
+      customerSearchBlock.style.display = "none";
+      customerSelectedBlock.style.display = "block";
+      selectedCustomerName.textContent = state.customer.name;
+      selectedCustomerCode.textContent = state.customer.code;
       addressSection.style.display = "block";
-      [...addressListEl.children].forEach((el, i) => {});
+    } else {
+      customerSearchBlock.style.display = "block";
+      customerSelectedBlock.style.display = "none";
+      addressSection.style.display = "none";
     }
   }
 
@@ -769,6 +817,7 @@
     invoiceDateInput.value = state.invoiceDate;
     customerSearchInput.value = "";
     customerListEl.innerHTML = "";
+    addressListEl.innerHTML = "";
     addressSection.style.display = "none";
     render();
   });
