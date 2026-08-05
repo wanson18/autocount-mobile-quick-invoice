@@ -216,7 +216,8 @@ class AutoCountClient:
         if not isinstance(operation, RequestOperation):
             raise AutoCountConfigError("operation must be a RequestOperation")
         path = self._build_path(company, endpoint)
-        headers = {"Key-ID": self._key_id, "API-Key": self._api_key}
+        key_id, api_key = self._credentials_for(company)
+        headers = {"Key-ID": key_id, "API-Key": api_key}
         try:
             response = await self._client.request(
                 method, path, headers=headers, params=params, json=json
@@ -235,9 +236,35 @@ class AutoCountClient:
             ) from None
         if not 200 <= response.status_code < 300:
             raise AutoCountRejectedError(
-                response.status_code, self._rejection_message(response, company)
+                response.status_code,
+                self._rejection_message(response, company, key_id, api_key),
             )
         return response
+
+    def _credentials_for(self, company: CompanyConfig) -> tuple[str, str]:
+        """Resolve the Key-ID/API-Key pair for this request.
+
+        Each AutoCount account book may have its own credentials
+        (``company.key_id``/``company.api_key``); when a company does not
+        set them, the client's own construction-time credentials are used.
+        Both of a company's fields must be present together — a partially
+        configured company (only one of the two set) is rejected by
+        ``app.config`` before it ever reaches here, but this is re-checked
+        defensively since callers can construct ``CompanyConfig`` directly
+        (e.g. in tests).
+        """
+        if not isinstance(company, CompanyConfig):
+            raise AutoCountConfigError("company must be a server-side CompanyConfig")
+        has_key_id = bool(company.key_id)
+        has_api_key = bool(company.api_key)
+        if has_key_id != has_api_key:
+            raise AutoCountConfigError(
+                "company configuration has a partial credential override "
+                "(key_id and api_key must be set together)"
+            )
+        if has_key_id:
+            return company.key_id, company.api_key
+        return self._key_id, self._api_key
 
     def _build_path(self, company: CompanyConfig, endpoint: str) -> str:
         if not isinstance(company, CompanyConfig):
@@ -279,8 +306,17 @@ class AutoCountClient:
                 "endpoint must not contain percent escapes, control, or whitespace characters"
             )
 
-    def _rejection_message(self, response: httpx.Response, company: CompanyConfig) -> str:
-        message = self._redact(_extract_message(response), extra=(company.account_book_id,))
+    def _rejection_message(
+        self,
+        response: httpx.Response,
+        company: CompanyConfig,
+        key_id: str,
+        api_key: str,
+    ) -> str:
+        message = self._redact(
+            _extract_message(response),
+            extra=(company.account_book_id, key_id, api_key),
+        )
         if not message:
             message = f"AutoCount rejected the request (status {response.status_code})"
         return message[:_MAX_MESSAGE_LENGTH]
