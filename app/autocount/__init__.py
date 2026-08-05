@@ -14,6 +14,7 @@ from app.autocount.errors import (
     AutoCountError,
     AutoCountRejectedError,
     AutoCountTransportError,
+    AutoCountUnsupportedError,
 )
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "AutoCountRejectedError",
     "AutoCountTransportError",
     "AutoCountAmbiguousWriteError",
+    "AutoCountUnsupportedError",
     "DEFAULT_BASE_URL",
     "DEFAULT_TIMEOUT",
 ]

@@ -31,7 +31,7 @@ from decimal import Decimal
 from typing import Any, Callable
 
 from app.autocount.client import AutoCountClient
-from app.autocount.errors import AutoCountDataError
+from app.autocount.errors import AutoCountDataError, AutoCountUnsupportedError
 from app.config import CompanyConfig
 from app.models.master_data import (
     CustomerSummary,
@@ -172,6 +172,27 @@ class AutoCountMasterDataAdapter:
             params_for=None,
             body_for=body_for,
             extract=self._invoice_row,
+        )
+
+    async def get_invoice_pdf(
+        self, company: CompanyConfig, invoice_id: str
+    ) -> bytes:
+        """The official AutoCount invoice PDF, or fail closed as unsupported.
+
+        Technical spike (see ``docs/autocount/pdf-spike.md``): the documented
+        Cloud Accounting Integration API exposes no PDF, print, or download
+        mechanism, so this contract raises ``AutoCountUnsupportedError``
+        without making an HTTP call and sharing stays disabled.
+
+        When AutoCount documents a supported mechanism, replace the raise with
+        the documented call through ``AutoCountClient.read`` and validate the
+        returned bytes start with ``%PDF`` before returning them; the unit
+        tests already encode that intended behaviour.
+        """
+        self._validate_id(invoice_id, "invoice_id")
+        raise AutoCountUnsupportedError(
+            "AutoCount provides no documented invoice PDF endpoint; "
+            "PDF sharing is disabled (see docs/autocount/pdf-spike.md)"
         )
 
     async def get_item(

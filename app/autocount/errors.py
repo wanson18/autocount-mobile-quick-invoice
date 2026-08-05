@@ -77,3 +77,13 @@ class AutoCountDataError(AutoCountError):
     mismatches, or unsafe prices. The message is static text only and never
     includes the raw response body.
     """
+
+
+class AutoCountUnsupportedError(AutoCountError):
+    """The documented AutoCount API provides no supported mechanism.
+
+    Raised by the adapter for operations the Cloud Accounting Integration API
+    does not document (currently the official invoice PDF). The adapter
+    boundary fails closed without an HTTP call; the operation stays disabled
+    until AutoCount documents a supported mechanism.
+    """
