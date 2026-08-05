@@ -23,6 +23,16 @@ from app.models.company import CompanyKey
 ENV_ACCOUNT_BOOK_ENTERPRISE = "AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE"
 ENV_ACCOUNT_BOOK_SDN_BHD = "AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD"
 
+# AutoCount issues a distinct Key-ID/API-Key pair per account book (each
+# company has its own credentials, not a shared one). These are optional:
+# when unset for a company, that company falls back to the client-wide
+# AUTOCOUNT_API_KEY_ID/AUTOCOUNT_API_KEY (see app/dependencies.py), which
+# keeps single-company and legacy shared-credential deployments working.
+ENV_KEY_ID_ENTERPRISE = "AUTOCOUNT_KEY_ID_WANSON_ENTERPRISE"
+ENV_API_KEY_ENTERPRISE = "AUTOCOUNT_API_KEY_WANSON_ENTERPRISE"
+ENV_KEY_ID_SDN_BHD = "AUTOCOUNT_KEY_ID_WANSON_SDN_BHD"
+ENV_API_KEY_SDN_BHD = "AUTOCOUNT_API_KEY_WANSON_SDN_BHD"
+
 _DISPLAY_NAMES = {
     CompanyKey.ENTERPRISE: "Wanson Enterprise",
     CompanyKey.SDN_BHD: "Wanson Enterprise (M) Sdn Bhd",
@@ -31,6 +41,11 @@ _DISPLAY_NAMES = {
 _ENV_VARS = {
     CompanyKey.ENTERPRISE: ENV_ACCOUNT_BOOK_ENTERPRISE,
     CompanyKey.SDN_BHD: ENV_ACCOUNT_BOOK_SDN_BHD,
+}
+
+_CREDENTIAL_ENV_VARS = {
+    CompanyKey.ENTERPRISE: (ENV_KEY_ID_ENTERPRISE, ENV_API_KEY_ENTERPRISE),
+    CompanyKey.SDN_BHD: (ENV_KEY_ID_SDN_BHD, ENV_API_KEY_SDN_BHD),
 }
 
 
@@ -49,6 +64,8 @@ class CompanyConfig:
     key: CompanyKey
     name: str
     account_book_id: str
+    key_id: str | None = None
+    api_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -72,10 +89,38 @@ def _load(env: Mapping[str, str]) -> dict[CompanyKey, CompanyConfig]:
                 f"Missing environment variable {env_var!r} for company {key.value!r}; "
                 "set it to the AutoCount account book ID server-side"
             )
-        configs[key] = CompanyConfig(key=key, name=_DISPLAY_NAMES[key], account_book_id=account_book_id)
+        key_id, api_key = _load_credentials(env, key)
+        configs[key] = CompanyConfig(
+            key=key,
+            name=_DISPLAY_NAMES[key],
+            account_book_id=account_book_id,
+            key_id=key_id,
+            api_key=api_key,
+        )
     if configs[CompanyKey.ENTERPRISE].account_book_id == configs[CompanyKey.SDN_BHD].account_book_id:
         raise CompanyConfigError("AutoCount account book IDs must be distinct across companies")
     return configs
+
+
+def _load_credentials(env: Mapping[str, str], key: CompanyKey) -> tuple[str | None, str | None]:
+    """Read this company's optional per-company Key-ID/API-Key pair.
+
+    Each AutoCount account book has its own credentials, so both env vars
+    must be set together for a company to use per-company auth; leaving both
+    unset is also valid and falls back to the client-wide credentials
+    (AUTOCOUNT_API_KEY_ID/AUTOCOUNT_API_KEY). Setting only one is a
+    misconfiguration and fails closed rather than silently using a partial or
+    wrong credential.
+    """
+    key_id_var, api_key_var = _CREDENTIAL_ENV_VARS[key]
+    key_id = env.get(key_id_var, "").strip()
+    api_key = env.get(api_key_var, "").strip()
+    if bool(key_id) != bool(api_key):
+        raise CompanyConfigError(
+            f"{key_id_var!r} and {api_key_var!r} must be set together for company "
+            f"{key.value!r}, or both left unset to use the shared AutoCount credentials"
+        )
+    return (key_id, api_key) if key_id else (None, None)
 
 
 def get_company(company: CompanyKey, env: Mapping[str, str] | None = None) -> CompanyConfig:
