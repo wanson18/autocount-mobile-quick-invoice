@@ -35,8 +35,13 @@ def map_invoice_payload(
             {
                 "productCode": product.code,
                 "description": product.name,
-                "qty": str(line.quantity),
-                "unitPrice": str(line.unit_price),
+                # Decimal, not str(): the transport layer (app.autocount.client)
+                # encodes Decimal as an exact, unquoted JSON number. AutoCount's
+                # API rejects a quoted decimal string for these numeric fields
+                # with a "System.Decimal" conversion error, and float() would
+                # risk silently rounding an exact price/quantity.
+                "qty": line.quantity,
+                "unitPrice": line.unit_price,
             }
         )
 

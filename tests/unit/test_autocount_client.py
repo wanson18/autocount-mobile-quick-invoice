@@ -85,6 +85,42 @@ def test_auth_headers_attached_and_json_content_type():
     assert request.headers["content-type"].startswith("application/json")
 
 
+def test_client_encodes_decimal_as_exact_bare_json_number():
+    """A ``Decimal`` in the ``json=`` payload must reach the wire as an
+    unquoted, exact JSON number — never a quoted string (AutoCount rejects
+    that with a "System.Decimal" conversion error) and never routed through
+    float() (which risks silently rounding an exact price/quantity)."""
+    from decimal import Decimal
+
+    captured = []
+
+    def handler(request):
+        captured.append(request.content)
+        return httpx.Response(200, json={"ok": True})
+
+    client = make_client(handler)
+
+    async def scenario():
+        return await client.write(
+            ENTERPRISE,
+            "POST",
+            "invoice",
+            json={
+                "details": [
+                    {"qty": Decimal("2.123456789012345"), "unitPrice": Decimal("19.995")}
+                ]
+            },
+        )
+
+    autoclose(client, scenario)
+    body = captured[0].decode("utf-8")
+    assert '"qty":2.123456789012345' in body
+    assert '"unitPrice":19.995' in body
+    # Never quoted as a string.
+    assert '"qty":"2.123456789012345"' not in body
+    assert '"2.123456789012345"' not in body
+
+
 def test_each_company_uses_its_own_account_book_path():
     paths = []
 
@@ -807,5 +843,6 @@ def test_legitimate_account_book_ids_are_preserved_verbatim():
             await client.read(company, "GET", "x")
 
         autoclose(client, scenario)
+
 
     assert calls == ["/AB_123-xyz/x", "/a1B2_C3/x", "/simple/x"]

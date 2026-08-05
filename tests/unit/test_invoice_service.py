@@ -142,7 +142,7 @@ async def test_issue_validates_master_data_creates_invoice_and_records_override(
     assert company is COMPANY
     assert (method, endpoint, params) == ("POST", "invoice", None)
     assert payload["master"]["debtorCode"] == "C001"
-    assert payload["details"][0]["unitPrice"] == "31.50"
+    assert payload["details"][0]["unitPrice"] == Decimal("31.50")
     assert [call[0] for call in master.calls] == ["customer", "address", "item"]
     assert invoice_service.requests.list_price_overrides("issue-1") == [
         {

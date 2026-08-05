@@ -76,14 +76,14 @@ def test_maps_confirmed_draft_to_approved_invoice_payload():
             {
                 "productCode": "OIL-5KG",
                 "description": "Cooking Oil 5KG",
-                "qty": "2",
-                "unitPrice": "31.50",
+                "qty": Decimal("2"),
+                "unitPrice": Decimal("31.50"),
             },
             {
                 "productCode": "OIL-2KG",
                 "description": "Cooking Oil 2KG",
-                "qty": "3.5",
-                "unitPrice": "13.20",
+                "qty": Decimal("3.5"),
+                "unitPrice": Decimal("13.20"),
             },
         ],
         "autoFillOption": {
@@ -141,8 +141,16 @@ def test_submit_einvoice_cannot_be_smuggled_into_this_approval_flow():
 
 def test_qty_and_price_preserve_exact_decimal_precision_beyond_float_safety():
     """A price/quantity that would silently round through a binary float must
-    reach AutoCount byte-for-byte as the original decimal text, never as a
-    JSON number produced by float()."""
+    reach AutoCount as an exact ``Decimal``, never a float-corrupted value.
+
+    The mapping layer keeps these as ``Decimal`` objects (not strings): the
+    transport layer (``app.autocount.client``) is responsible for encoding
+    them as exact, unquoted JSON numbers on the wire — see
+    ``test_client_encodes_decimal_as_exact_bare_json_number`` in
+    ``test_autocount_client.py``. AutoCount rejects a quoted decimal string
+    for these fields with a "System.Decimal" conversion error, and float()
+    would risk silently rounding an exact price/quantity.
+    """
     from app.models.invoice import InvoiceLineInput
 
     draft = make_draft().model_copy(
@@ -169,9 +177,9 @@ def test_qty_and_price_preserve_exact_decimal_precision_beyond_float_safety():
     payload = map_invoice_payload(draft, resolved_address(), products)
     line = payload["details"][0]
 
-    assert line["qty"] == "2.123456789012345"
-    assert line["unitPrice"] == "19.995"
-    # float() would corrupt this value (e.g. via IEEE-754 rounding); guard
-    # against a regression back to float() by asserting the JSON type too.
-    assert isinstance(line["qty"], str)
-    assert isinstance(line["unitPrice"], str)
+    assert line["qty"] == Decimal("2.123456789012345")
+    assert line["unitPrice"] == Decimal("19.995")
+    # Guard against a regression to float(), which would silently corrupt
+    # precision via IEEE-754 rounding.
+    assert isinstance(line["qty"], Decimal)
+    assert isinstance(line["unitPrice"], Decimal)

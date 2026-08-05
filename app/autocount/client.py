@@ -23,7 +23,10 @@ logging. No automatic retry of any kind is configured.
 
 from __future__ import annotations
 
+import json as _json
 import math
+import secrets as _secrets
+from decimal import Decimal
 from enum import Enum
 from typing import Any, TypeAlias
 
@@ -64,6 +67,41 @@ class RequestOperation(Enum):
 
     READ = "read"
     WRITE = "write"
+
+
+def _encode_json_body(payload: Any) -> bytes:
+    """Encode ``payload`` to JSON bytes, emitting ``Decimal`` as bare numbers.
+
+    Every ``Decimal`` is swapped for a unique placeholder string before
+    encoding, then the quoted placeholder is replaced with the ``Decimal``'s
+    exact ``str()`` text (unquoted) in the resulting JSON text. This keeps
+    quantities/prices numerically exact -- never routed through ``float`` --
+    while still producing a bare JSON number, which is what AutoCount's API
+    requires (a quoted string triggers a ``System.Decimal`` conversion error
+    on their end).
+    """
+    decimals: dict[str, str] = {}
+    nonce = _secrets.token_hex(16)
+
+    def _placeholder(value: Decimal) -> str:
+        token = f"__DECIMAL_{nonce}_{len(decimals)}__"
+        decimals[token] = str(value)
+        return token
+
+    def _substitute(value: Any) -> Any:
+        if isinstance(value, Decimal):
+            return _placeholder(value)
+        if isinstance(value, dict):
+            return {k: _substitute(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_substitute(v) for v in value]
+        return value
+
+    prepared = _substitute(payload)
+    text = _json.dumps(prepared, ensure_ascii=False, separators=(",", ":"))
+    for token, number_text in decimals.items():
+        text = text.replace(f'"{token}"', number_text)
+    return text.encode("utf-8")
 
 
 def _extract_message(response: httpx.Response) -> str:
@@ -218,9 +256,20 @@ class AutoCountClient:
         path = self._build_path(company, endpoint)
         key_id, api_key = self._credentials_for(company)
         headers = {"Key-ID": key_id, "API-Key": api_key}
+        content = None
+        if json is not None:
+            # Encode ourselves rather than passing json= through to httpx:
+            # httpx's default encoder (stdlib json.dumps) cannot serialise
+            # Decimal at all, and coercing to float first would risk
+            # corrupting an exact price/quantity via IEEE-754 rounding.
+            # AutoCount also requires qty/unitPrice as bare JSON numbers, not
+            # quoted strings (a quoted decimal fails with a System.Decimal
+            # conversion error on their end), so this also fixes that.
+            content = _encode_json_body(json)
+            headers["Content-Type"] = "application/json"
         try:
             response = await self._client.request(
-                method, path, headers=headers, params=params, json=json
+                method, path, headers=headers, params=params, content=content
             )
         except httpx.TimeoutException:
             if operation is RequestOperation.WRITE:
@@ -247,7 +296,7 @@ class AutoCountClient:
         Each AutoCount account book may have its own credentials
         (``company.key_id``/``company.api_key``); when a company does not
         set them, the client's own construction-time credentials are used.
-        Both of a company's fields must be present together — a partially
+        Both of a company's fields must be present together -- a partially
         configured company (only one of the two set) is rejected by
         ``app.config`` before it ever reaches here, but this is re-checked
         defensively since callers can construct ``CompanyConfig`` directly
