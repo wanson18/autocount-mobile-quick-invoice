@@ -35,8 +35,8 @@ def map_invoice_payload(
             {
                 "productCode": product.code,
                 "description": product.name,
-                "qty": float(line.quantity),
-                "unitPrice": float(line.unit_price),
+                "qty": str(line.quantity),
+                "unitPrice": str(line.unit_price),
             }
         )
 

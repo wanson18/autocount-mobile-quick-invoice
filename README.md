@@ -17,7 +17,7 @@ mandatory. MyInvois submission remains a separate explicit workflow.
   isolation, AutoCount client + payload mapping, idempotent invoice service,
   ambiguous-write reconciliation, master-data search, official-PDF spike
   (fail-closed), price history, and the REST API with the Custom GPT Action
-  schema. **333 tests pass.**
+  schema. **334 tests pass.**
 - **Pending:** Task 10 (e-Invoice technical spike), HTTPS deployment +
   Action registration, then Tasks 12–15 (PWA, Share Sheet, security, E2E).
 - **Blocked:** official PDF sharing — AutoCount documents no PDF/print
@@ -89,7 +89,7 @@ ambiguous writes (`retryable: true`), `500` never leaks internals.
 uv venv .venv
 uv pip install -e ".[dev]"        # fastapi, uvicorn, pydantic, httpx, pytest
 
-# Run the test suite (333 tests, no live network required)
+# Run the test suite (334 tests, no live network required)
 .venv/Scripts/python.exe -m pytest tests/
 ```
 

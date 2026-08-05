@@ -7,12 +7,12 @@ account-book ID, even when AutoCount echoes one back in its error text.
 The hierarchy deliberately distinguishes four classes of failure so that
 downstream services (idempotency, reconciliation) can react differently:
 
-- ``AutoCountRejectedError`` �?" AutoCount answered with a non-2xx status.
-- ``AutoCountTransportError`` �?" the request never produced an HTTP response
+- ``AutoCountRejectedError`` — AutoCount answered with a non-2xx status.
+- ``AutoCountTransportError`` — the request never produced an HTTP response
   (including a timeout on a read-like call).
-- ``AutoCountAmbiguousWriteError`` �?" a timeout on an explicitly marked write,
+- ``AutoCountAmbiguousWriteError`` — a timeout on an explicitly marked write,
   where AutoCount may or may not have applied the operation.
-- ``AutoCountDataError`` �?" AutoCount answered 2xx but the success payload was
+- ``AutoCountDataError`` — AutoCount answered 2xx but the success payload was
   malformed, inconsistent, or unsafe to use. Messages are static and never
   embed the raw body, so no account-book ID, credential, or taxpayer/customer
   data can leak.

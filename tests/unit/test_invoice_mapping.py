@@ -76,14 +76,14 @@ def test_maps_confirmed_draft_to_approved_invoice_payload():
             {
                 "productCode": "OIL-5KG",
                 "description": "Cooking Oil 5KG",
-                "qty": 2.0,
-                "unitPrice": 31.5,
+                "qty": "2",
+                "unitPrice": "31.50",
             },
             {
                 "productCode": "OIL-2KG",
                 "description": "Cooking Oil 2KG",
-                "qty": 3.5,
-                "unitPrice": 13.2,
+                "qty": "3.5",
+                "unitPrice": "13.20",
             },
         ],
         "autoFillOption": {
@@ -137,3 +137,41 @@ def test_submit_einvoice_cannot_be_smuggled_into_this_approval_flow():
 
     with pytest.raises(ValueError, match="e-Invoice"):
         map_invoice_payload(draft, resolved_address(), resolved_products())
+
+
+def test_qty_and_price_preserve_exact_decimal_precision_beyond_float_safety():
+    """A price/quantity that would silently round through a binary float must
+    reach AutoCount byte-for-byte as the original decimal text, never as a
+    JSON number produced by float()."""
+    from app.models.invoice import InvoiceLineInput
+
+    draft = make_draft().model_copy(
+        update={
+            "lines": [
+                InvoiceLineInput(
+                    item_id="OIL-5KG",
+                    quantity=Decimal("2.123456789012345"),
+                    unit_price=Decimal("19.995"),
+                    original_unit_price=Decimal("19.995"),
+                )
+            ]
+        }
+    )
+    products = {
+        "OIL-5KG": ProductSummary(
+            id="OIL-5KG",
+            code="OIL-5KG",
+            name="Cooking Oil 5KG",
+            default_price=Decimal("19.995"),
+        )
+    }
+
+    payload = map_invoice_payload(draft, resolved_address(), products)
+    line = payload["details"][0]
+
+    assert line["qty"] == "2.123456789012345"
+    assert line["unitPrice"] == "19.995"
+    # float() would corrupt this value (e.g. via IEEE-754 rounding); guard
+    # against a regression back to float() by asserting the JSON type too.
+    assert isinstance(line["qty"], str)
+    assert isinstance(line["unitPrice"], str)
