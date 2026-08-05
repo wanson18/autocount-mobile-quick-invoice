@@ -126,3 +126,61 @@ def test_internal_resolver_rejects_account_book_id_input():
 def test_internal_resolver_rejects_none():
     with pytest.raises(CompanyConfigError):
         get_company(None, ENV)
+
+
+def test_per_company_credentials_default_to_none():
+    enterprise = get_company(CompanyKey.ENTERPRISE, ENV)
+    sdn_bhd = get_company(CompanyKey.SDN_BHD, ENV)
+    assert enterprise.key_id is None
+    assert enterprise.api_key is None
+    assert sdn_bhd.key_id is None
+    assert sdn_bhd.api_key is None
+
+
+def test_per_company_credentials_are_loaded_when_set():
+    env = {
+        **ENV,
+        "AUTOCOUNT_KEY_ID_WANSON_ENTERPRISE": "ent-key-id",
+        "AUTOCOUNT_API_KEY_WANSON_ENTERPRISE": "ent-api-key",
+        "AUTOCOUNT_KEY_ID_WANSON_SDN_BHD": "sdn-key-id",
+        "AUTOCOUNT_API_KEY_WANSON_SDN_BHD": "sdn-api-key",
+    }
+    enterprise = get_company(CompanyKey.ENTERPRISE, env)
+    sdn_bhd = get_company(CompanyKey.SDN_BHD, env)
+    assert (enterprise.key_id, enterprise.api_key) == ("ent-key-id", "ent-api-key")
+    assert (sdn_bhd.key_id, sdn_bhd.api_key) == ("sdn-key-id", "sdn-api-key")
+
+
+def test_one_company_can_override_while_the_other_falls_back():
+    env = {
+        **ENV,
+        "AUTOCOUNT_KEY_ID_WANSON_SDN_BHD": "sdn-key-id",
+        "AUTOCOUNT_API_KEY_WANSON_SDN_BHD": "sdn-api-key",
+    }
+    enterprise = get_company(CompanyKey.ENTERPRISE, env)
+    sdn_bhd = get_company(CompanyKey.SDN_BHD, env)
+    assert enterprise.key_id is None and enterprise.api_key is None
+    assert (sdn_bhd.key_id, sdn_bhd.api_key) == ("sdn-key-id", "sdn-api-key")
+
+
+@pytest.mark.parametrize(
+    "partial_env",
+    [
+        {"AUTOCOUNT_KEY_ID_WANSON_ENTERPRISE": "only-key-id"},
+        {"AUTOCOUNT_API_KEY_WANSON_ENTERPRISE": "only-api-key"},
+    ],
+)
+def test_partial_per_company_credentials_are_rejected(partial_env):
+    env = {**ENV, **partial_env}
+    with pytest.raises(CompanyConfigError, match="must be set together"):
+        get_company(CompanyKey.ENTERPRISE, env)
+
+
+def test_per_company_credential_whitespace_is_stripped():
+    env = {
+        **ENV,
+        "AUTOCOUNT_KEY_ID_WANSON_ENTERPRISE": "  ent-key-id  ",
+        "AUTOCOUNT_API_KEY_WANSON_ENTERPRISE": "  ent-api-key  ",
+    }
+    enterprise = get_company(CompanyKey.ENTERPRISE, env)
+    assert (enterprise.key_id, enterprise.api_key) == ("ent-key-id", "ent-api-key")
