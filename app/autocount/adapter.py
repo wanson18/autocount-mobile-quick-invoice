@@ -27,6 +27,7 @@ routes, or UI work lives here.
 from __future__ import annotations
 
 import decimal
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable
 
@@ -38,6 +39,7 @@ from app.models.master_data import (
     DeliveryAddress,
     InvoiceLineSummary,
     InvoiceSummary,
+    PriceHistory,
     ProductSummary,
 )
 
@@ -48,6 +50,10 @@ _ACTIVE_STATUSES = {
     "inactive": False,
     "discontinued": False,
 }
+#: How far back price history searches for prior invoices. A bounded window
+#: keeps the listing paging bounded; 90 days covers the customer's recent
+#: pricing for the confirmation preview.
+PRICE_HISTORY_WINDOW_DAYS = 90
 
 
 class AutoCountMasterDataAdapter:
@@ -194,6 +200,51 @@ class AutoCountMasterDataAdapter:
             "AutoCount provides no documented invoice PDF endpoint; "
             "PDF sharing is disabled (see docs/autocount/pdf-spike.md)"
         )
+
+    async def get_latest_price(
+        self,
+        company: CompanyConfig,
+        customer_id: str,
+        item_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> PriceHistory | None:
+        """The latest unit price issued to this customer for this item.
+
+        Searches the customer's invoices created within the last
+        ``PRICE_HISTORY_WINDOW_DAYS`` days and returns the unit price of the
+        most recent non-cancelled invoice whose details contain the item,
+        together with that source invoice's number and date. Returns ``None``
+        when no prior invoice for the pair exists in the window.
+
+        ``now`` pins the window end for deterministic tests; the default is
+        the current UTC time.
+        """
+        customer_id = self._validate_id(customer_id, "customer_id")
+        item_id = self._validate_id(item_id, "item_id")
+        now = now or datetime.now(timezone.utc)
+        since = (now - timedelta(days=PRICE_HISTORY_WINDOW_DAYS)).isoformat()
+        invoices = await self.search_invoices(
+            company,
+            customer_id=customer_id,
+            date_from=since,
+            date_to=now.isoformat(),
+        )
+        for invoice in sorted(
+            (i for i in invoices if not i.is_cancelled),
+            key=lambda i: i.doc_date,
+            reverse=True,
+        ):
+            for line in invoice.lines:
+                if line.product_code == item_id:
+                    return PriceHistory(
+                        item_id=item_id,
+                        customer_id=customer_id,
+                        unit_price=line.unit_price,
+                        source_invoice_number=invoice.doc_no,
+                        source_invoice_date=invoice.doc_date,
+                    )
+        return None
 
     async def get_item(
         self, company: CompanyConfig, item_id: str

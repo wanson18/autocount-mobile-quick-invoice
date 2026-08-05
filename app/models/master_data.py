@@ -51,6 +51,24 @@ class ProductSummary:
 
 
 @dataclass(frozen=True)
+class PriceHistory:
+    """The latest issued unit price for one customer/item pair.
+
+    Non-authoritative reference for the confirmation preview: the unit price
+    AutoCount last issued to this customer for this item on a non-cancelled
+    invoice, plus the source invoice number and date so the preview can be
+    traced back to the originating invoice. ``None`` means no prior invoice
+    for this pair within the lookup window.
+    """
+
+    item_id: str
+    customer_id: str
+    unit_price: Decimal
+    source_invoice_number: str
+    source_invoice_date: str
+
+
+@dataclass(frozen=True)
 class InvoiceLineSummary:
     """One detail line of an existing AutoCount invoice."""
 
