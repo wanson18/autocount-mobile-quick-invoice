@@ -10,11 +10,15 @@ from fastapi import APIRouter, Depends, Query
 from app.config import get_company
 from app.dependencies import get_master_data
 from app.models.company import CompanyKey
+from app.models.master_data import (
+    CustomerSearchResponse,
+    DeliveryAddressListResponse,
+)
 
 router = APIRouter(tags=["customers"])
 
 
-@router.get("/{company}/customers", operation_id="searchCustomers")
+@router.get("/{company}/customers", operation_id="searchCustomers", response_model=CustomerSearchResponse)
 async def search_customers(
     company: CompanyKey,
     q: str = Query(default="", max_length=100),
@@ -28,7 +32,7 @@ async def search_customers(
     }
 
 
-@router.get("/{company}/customers/{customer_id}/addresses", operation_id="listCustomerAddresses")
+@router.get("/{company}/customers/{customer_id}/addresses", operation_id="listCustomerAddresses", response_model=DeliveryAddressListResponse)
 async def get_customer_addresses(
     company: CompanyKey,
     customer_id: str,

@@ -7,11 +7,12 @@ AutoCount account-book IDs are never part of the response.
 from fastapi import APIRouter
 
 from app.config import list_companies
+from app.models.company import CompanyListResponse
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
 
-@router.get("", operation_id="listCompanies")
+@router.get("", operation_id="listCompanies", response_model=CompanyListResponse)
 def get_companies() -> dict:
     return {
         "data": [

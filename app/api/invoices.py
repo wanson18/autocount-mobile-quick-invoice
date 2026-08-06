@@ -18,13 +18,18 @@ from fastapi.responses import Response
 from app.config import get_company
 from app.dependencies import get_invoice_service, get_master_data
 from app.models.company import CompanyKey
-from app.models.invoice import InvoiceDraftInput, InvoicePreviewInput
+from app.models.invoice import (
+    InvoiceDraftInput,
+    InvoiceIssueResponse,
+    InvoicePreviewInput,
+    PreviewResponse,
+)
 from app.services.price_history import get_price_history
 
 router = APIRouter(tags=["invoices"])
 
 
-@router.post("/invoices", operation_id="issueInvoice", status_code=201)
+@router.post("/invoices", operation_id="issueInvoice", status_code=201, response_model=InvoiceIssueResponse)
 async def issue_invoice(
     draft: InvoiceDraftInput,
     service=Depends(get_invoice_service),
@@ -51,7 +56,7 @@ async def issue_invoice(
     }
 
 
-@router.post("/invoices/preview", operation_id="previewInvoicePrices")
+@router.post("/invoices/preview", operation_id="previewInvoicePrices", response_model=PreviewResponse)
 async def preview_invoice_prices(
     preview: InvoicePreviewInput,
     master=Depends(get_master_data),

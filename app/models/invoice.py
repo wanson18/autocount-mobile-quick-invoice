@@ -59,3 +59,42 @@ class InvoicePreviewInput(BaseModel):
     company: CompanyKey
     customer_id: NonBlankIdentifier
     item_ids: list[NonBlankIdentifier] = Field(min_length=1)
+
+
+class PriceOverrideItem(BaseModel):
+    item_id: str
+    original_unit_price: str
+    issued_unit_price: str
+
+
+class EInvoiceResultItem(BaseModel):
+    status: str
+    error_message: str | None = None
+
+
+class InvoiceIssueData(BaseModel):
+    company: str
+    invoice_id: str
+    invoice_number: str
+    price_overrides: list[PriceOverrideItem]
+    einvoice: EInvoiceResultItem
+
+
+class InvoiceIssueResponse(BaseModel):
+    data: InvoiceIssueData
+
+
+class PreviewItem(BaseModel):
+    item_id: str
+    latest_unit_price: str | None = None
+    source_invoice_number: str | None = None
+    source_invoice_date: str | None = None
+
+
+class PreviewData(BaseModel):
+    customer_id: str
+    items: list[PreviewItem]
+
+
+class PreviewResponse(BaseModel):
+    data: PreviewData

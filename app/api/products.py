@@ -9,11 +9,12 @@ from fastapi import APIRouter, Depends, Query
 from app.config import get_company
 from app.dependencies import get_master_data
 from app.models.company import CompanyKey
+from app.models.master_data import ProductSearchResponse
 
 router = APIRouter(tags=["products"])
 
 
-@router.get("/{company}/products", operation_id="searchProducts")
+@router.get("/{company}/products", operation_id="searchProducts", response_model=ProductSearchResponse)
 async def search_products(
     company: CompanyKey,
     q: str = Query(default="", max_length=100),

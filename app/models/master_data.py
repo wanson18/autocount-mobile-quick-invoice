@@ -16,6 +16,8 @@ Identity rules:
 from dataclasses import dataclass
 from decimal import Decimal
 
+from pydantic import BaseModel
+
 
 @dataclass(frozen=True)
 class CustomerSummary:
@@ -94,3 +96,34 @@ class InvoiceSummary:
     total: Decimal
     lines: tuple[InvoiceLineSummary, ...]
     is_cancelled: bool = False
+
+
+class CustomerSearchItem(BaseModel):
+    id: str
+    code: str
+    name: str
+
+
+class CustomerSearchResponse(BaseModel):
+    data: list[CustomerSearchItem]
+
+
+class DeliveryAddressItem(BaseModel):
+    id: str
+    label: str
+    address_text: str
+
+
+class DeliveryAddressListResponse(BaseModel):
+    data: list[DeliveryAddressItem]
+
+
+class ProductSearchItem(BaseModel):
+    id: str
+    code: str
+    name: str
+    default_price: str
+
+
+class ProductSearchResponse(BaseModel):
+    data: list[ProductSearchItem]
