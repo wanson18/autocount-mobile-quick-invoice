@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Protocol
+from urllib.parse import parse_qs, urlsplit
 
 from app.autocount.errors import AutoCountAmbiguousWriteError, AutoCountDataError
 from app.autocount.mapping import map_invoice_payload
@@ -71,6 +72,16 @@ class MasterDataPort(Protocol):
 
 class AutoCountWritePort(Protocol):
     async def write(
+        self,
+        company: CompanyConfig,
+        method: str,
+        endpoint: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: Any | None = None,
+    ) -> Any: ...
+
+    async def read(
         self,
         company: CompanyConfig,
         method: str,
@@ -181,7 +192,9 @@ class InvoiceService:
             response = await self.client.write(
                 company, "POST", "invoice", json=payload
             )
-            invoice_id, invoice_number = self._parse_create_response(response)
+            invoice_id, invoice_number = await self._resolve_created_invoice(
+                company, response
+            )
         except AutoCountAmbiguousWriteError as exc:
             self.requests.mark_ambiguous(draft.idempotency_key, str(exc))
             raise
@@ -372,26 +385,64 @@ class InvoiceService:
         ).encode("utf-8")
         return hashlib.sha256(canonical).hexdigest()
 
+    async def _resolve_created_invoice(
+        self, company: CompanyConfig, create_response: Any
+    ) -> tuple[str, str]:
+        """Resolve ``(invoice_id, invoice_number)`` for a just-created invoice.
+
+        AutoCount's documented Create Invoice success response is a bare 201
+        with no guaranteed JSON body -- the only documented success signal is
+        the ``location`` response header, described as "the link to the
+        created record, similar to request url in Get Invoice API method"
+        (https://accounting-api.autocountcloud.com/documentation/api-methods/invoice/create-invoice/).
+        Get Invoice's URL shape is ``.../invoice?docNo=<docNo>`` (see
+        https://accounting-api.autocountcloud.com/documentation/api-methods/invoice/get-invoice/),
+        so the created invoice's ``docNo`` is recovered from that header's
+        query string. The invoice's true identity, ``docKey`` (see
+        https://accounting-api.autocountcloud.com/documentation/models/invoice/viewmodels/invoice-master-viewmodel/),
+        is not in that header, so a follow-up Get Invoice call fetches it.
+        """
+        doc_no = self._doc_no_from_location(create_response)
+        get_response = await self.client.read(
+            company, "GET", "invoice", params={"docNo": doc_no}
+        )
+        return self._parse_invoice_view(get_response)
+
     @staticmethod
-    def _parse_create_response(response: Any) -> tuple[str, str]:
+    def _doc_no_from_location(response: Any) -> str:
+        location = getattr(response, "headers", {}).get("location")
+        if not _non_blank_string(location):
+            raise AutoCountDataError(
+                "AutoCount invoice create response is missing a location header"
+            )
+        query = urlsplit(location).query
+        doc_no = parse_qs(query).get("docNo", [None])[0]
+        if not _non_blank_string(doc_no):
+            raise AutoCountDataError(
+                "AutoCount invoice create response location header has no docNo"
+            )
+        return doc_no.strip()
+
+    @staticmethod
+    def _parse_invoice_view(response: Any) -> tuple[str, str]:
         try:
             payload = response.json()
         except (AttributeError, ValueError):
             raise AutoCountDataError(
-                "AutoCount invoice create response is not valid JSON"
+                "AutoCount get-invoice response is not valid JSON"
             ) from None
-        if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
+        master = payload.get("master") if isinstance(payload, dict) else None
+        if not isinstance(master, dict):
             raise AutoCountDataError(
-                "AutoCount invoice create response is missing its data object"
+                "AutoCount get-invoice response is missing its master object"
             )
-        data = payload["data"]
-        invoice_id = data.get("id")
-        invoice_number = data.get("docNo")
-        if not _non_blank_string(invoice_id) or not _non_blank_string(invoice_number):
+        doc_key = master.get("docKey")
+        doc_no = master.get("docNo")
+        if doc_key is None or not _non_blank_string(doc_no):
             raise AutoCountDataError(
-                "AutoCount invoice create response is missing invoice identity"
+                "AutoCount get-invoice response is missing invoice identity"
             )
-        return invoice_id.strip(), invoice_number.strip()
+        return str(doc_key).strip(), doc_no.strip()
 
     @staticmethod
     def _price_overrides(draft: InvoiceDraftInput) -> tuple[dict[str, Any], ...]:

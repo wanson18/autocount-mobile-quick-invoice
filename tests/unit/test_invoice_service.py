@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from app.autocount.errors import AutoCountRejectedError
+from app.autocount.errors import AutoCountDataError, AutoCountRejectedError
 from app.autocount.adapter import AutoCountMasterDataAdapter
 from app.config import CompanyConfig
 from app.models.company import CompanyKey
@@ -30,10 +30,13 @@ COMPANY = CompanyConfig(
 
 
 class Response:
-    def __init__(self, payload):
+    def __init__(self, payload=None, *, headers=None):
         self._payload = payload
+        self.headers = headers or {}
 
     def json(self):
+        if self._payload is None:
+            raise ValueError("no JSON body")
         return self._payload
 
 
@@ -69,18 +72,32 @@ class FakeMasterData:
 
 
 class FakeClient:
-    def __init__(self, response=None, error=None):
-        self.response = response or Response(
-            {"data": {"id": "inv-1", "docNo": "INV-2026-0001"}}
+    """Mirrors AutoCount's real Create Invoice contract: POST returns a bare
+    201 with only a ``location`` header (no JSON body), and the invoice
+    identity is recovered via a follow-up GET, exactly like
+    ``InvoiceService._resolve_created_invoice`` does against the live API.
+    """
+
+    def __init__(self, *, write_response=None, read_response=None, error=None):
+        self.write_response = write_response or Response(
+            headers={"location": "https://accounting-api.autocountcloud.com/1/invoice?docNo=INV-2026-0001"}
+        )
+        self.read_response = read_response or Response(
+            {"master": {"docKey": "inv-1", "docNo": "INV-2026-0001"}}
         )
         self.error = error
         self.writes = []
+        self.reads = []
 
     async def write(self, company, method, endpoint, *, json=None, params=None):
         self.writes.append((company, method, endpoint, json, params))
         if self.error:
             raise self.error
-        return self.response
+        return self.write_response
+
+    async def read(self, company, method, endpoint, *, json=None, params=None):
+        self.reads.append((company, method, endpoint, json, params))
+        return self.read_response
 
 
 class FakeEInvoice:
@@ -149,6 +166,14 @@ async def test_issue_validates_master_data_creates_invoice_and_records_override(
     assert payload["details"][0]["unitPrice"] == Decimal("31.50")
     assert payload["details"][0]["accNo"] == "500-0000"
     assert [call[0] for call in master.calls] == ["customer", "address", "item"]
+    assert len(client.reads) == 1
+    read_company, read_method, read_endpoint, _, read_params = client.reads[0]
+    assert read_company is COMPANY
+    assert (read_method, read_endpoint, read_params) == (
+        "GET",
+        "invoice",
+        {"docNo": "INV-2026-0001"},
+    )
     assert invoice_service.requests.list_price_overrides("issue-1") == [
         {
             "item_id": "ITEM-1",
@@ -235,3 +260,44 @@ async def test_einvoice_failure_is_separate_from_successful_invoice(tmp_path):
     assert result.einvoice.status is EInvoiceStatus.ACTION_REQUIRED
     assert result.einvoice.error_message == "taxpayer data incomplete"
     assert len(einvoice.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_response_missing_location_header_fails_closed(tmp_path):
+    """AutoCount's documented Create Invoice success has no guaranteed JSON
+    body -- only a ``location`` header. If that header is absent, the
+    request must fail closed rather than silently return no identity."""
+    client = FakeClient(write_response=Response(headers={}))
+    draft = make_draft()
+    invoice_service = service(tmp_path, client=client)
+
+    with pytest.raises(AutoCountDataError, match="location header"):
+        await invoice_service.issue(draft)
+
+    stored = invoice_service.requests.get(draft.idempotency_key)
+    assert stored.status is RequestStatus.FAILED
+    assert client.reads == []
+
+
+@pytest.mark.asyncio
+async def test_create_response_location_header_without_docno_fails_closed(tmp_path):
+    client = FakeClient(
+        write_response=Response(
+            headers={"location": "https://accounting-api.autocountcloud.com/1/invoice"}
+        )
+    )
+    draft = make_draft()
+    invoice_service = service(tmp_path, client=client)
+
+    with pytest.raises(AutoCountDataError, match="docNo"):
+        await invoice_service.issue(draft)
+
+
+@pytest.mark.asyncio
+async def test_get_invoice_response_missing_master_fails_closed(tmp_path):
+    client = FakeClient(read_response=Response({"details": []}))
+    draft = make_draft()
+    invoice_service = service(tmp_path, client=client)
+
+    with pytest.raises(AutoCountDataError, match="master"):
+        await invoice_service.issue(draft)

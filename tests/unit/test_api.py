@@ -92,11 +92,21 @@ def make_issue_service(tmp_path, *, client=None):
 
 
 def _default_client():
+    """Mirrors AutoCount's real Create Invoice contract: POST /invoice
+    returns a bare 201 with only a ``location`` header (no JSON body), and
+    GET /invoice (used by InvoiceService to resolve the created invoice's
+    identity) returns the documented view model."""
+
     def handler(request):
-        return httpx.Response(
-            200,
-            json={"data": {"id": "inv-1", "docNo": "INV-2026-0001"}},
-        )
+        if request.method == "POST" and request.url.path.endswith("/invoice"):
+            location = str(request.url.copy_with(query=b"docNo=INV-2026-0001"))
+            return httpx.Response(201, headers={"location": location})
+        if request.method == "GET" and request.url.path.endswith("/invoice"):
+            return httpx.Response(
+                200,
+                json={"master": {"docKey": "inv-1", "docNo": "INV-2026-0001"}},
+            )
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
     return AutoCountClient(KEY_ID, API_KEY, transport=httpx.MockTransport(handler))
 
