@@ -117,7 +117,7 @@ def test_default_credit_term_and_sales_location_are_wanson_standard_terms():
     business owner): cash on delivery, out of the single HQ sales location,
     posted to the one trade debtors AR account. These are not derived
     per-customer from AutoCount."""
-    assert DEFAULT_CREDIT_TERM == "COD"
+    assert DEFAULT_CREDIT_TERM == "C.O.D"
     assert DEFAULT_SALES_LOCATION == "HQ"
     assert DEFAULT_ACC_NO == "500-0000"
 

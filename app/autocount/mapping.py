@@ -9,7 +9,10 @@ from app.models.master_data import CustomerSummary, DeliveryAddress, ProductSumm
 #: Wanson issues every quick-invoice on the same standard terms: cash on
 #: delivery, out of the single HQ sales location. Confirmed with the business
 #: owner (not derived from AutoCount) because these aren't per-customer here.
-DEFAULT_CREDIT_TERM = "COD"
+#: The credit term must match the exact CreditTermKey configured in AutoCount
+#: (Master Data > Credit Term) — "COD" was rejected live with "CreditTerm
+#: (CreditTermKey = COD) not exists"; the real key is "C.O.D".
+DEFAULT_CREDIT_TERM = "C.O.D"
 DEFAULT_SALES_LOCATION = "HQ"
 
 #: AutoCount's Invoice Detail Input Model requires ``accNo`` on every line —
