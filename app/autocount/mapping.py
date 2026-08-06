@@ -10,9 +10,11 @@ from app.models.master_data import CustomerSummary, DeliveryAddress, ProductSumm
 #: delivery, out of the single HQ sales location. Confirmed with the business
 #: owner (not derived from AutoCount) because these aren't per-customer here.
 #: The credit term must match the exact CreditTermKey configured in AutoCount
-#: (Master Data > Credit Term) — "COD" was rejected live with "CreditTerm
-#: (CreditTermKey = COD) not exists"; the real key is "C.O.D".
-DEFAULT_CREDIT_TERM = "C.O.D"
+#: (Master Data > Credit Term). Confirmed from a screenshot of the actual
+#: AutoCount dropdown after "COD" and "C.O.D" were both rejected live with
+#: "CreditTerm (CreditTermKey = ...) not exists"; the real key has a trailing
+#: period: "C.O.D.".
+DEFAULT_CREDIT_TERM = "C.O.D."
 DEFAULT_SALES_LOCATION = "HQ"
 
 #: AutoCount's Invoice Detail Input Model requires ``accNo`` on every line —
