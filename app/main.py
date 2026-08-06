@@ -189,6 +189,29 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
     return _error(500, "internal_error", "an unexpected error occurred")
 
 
+def _downgrade_exclusive_bounds(obj: object) -> None:
+    """Walk *obj* in-place, converting 3.1-style numeric exclusiveMinimum/
+    exclusiveMaximum to 3.0-compatible boolean-flag style.
+
+    JSON Schema 2020-12 (OpenAPI 3.1) allows ``exclusiveMinimum`` to be a
+    number; draft-04 (OpenAPI 3.0) requires it to be ``true`` combined with a
+    ``minimum`` of the same value.
+    """
+    if isinstance(obj, dict):
+        for key, val in list(obj.items()):
+            if key == "exclusiveMinimum" and isinstance(val, (int, float)):
+                obj["minimum"] = val
+                obj["exclusiveMinimum"] = True
+            elif key == "exclusiveMaximum" and isinstance(val, (int, float)):
+                obj["maximum"] = val
+                obj["exclusiveMaximum"] = True
+            else:
+                _downgrade_exclusive_bounds(val)
+    elif isinstance(obj, list):
+        for item in obj:
+            _downgrade_exclusive_bounds(item)
+
+
 def custom_openapi() -> dict:
     if app.openapi_schema is not None:
         return app.openapi_schema
@@ -197,10 +220,15 @@ def custom_openapi() -> dict:
         version=app.version,
         description=app.description,
         routes=app.routes,
+        openapi_version="3.0.3",
         servers=[
             {"url": "https://autocount-mobile-quick-invoice.vercel.app", "description": "Production"},
         ],
     )
+    # Downgrade any 3.1-only numeric exclusiveMinimum/exclusiveMaximum to
+    # 3.0-compatible boolean-flag form (see _downgrade_exclusive_bounds).
+    _downgrade_exclusive_bounds(schema)
+
     # Custom GPT Actions: side-effecting actions must be marked consequential
     # so ChatGPT confirms with the user before invoking them.
     for path in schema.get("paths", {}).values():
