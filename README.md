@@ -13,14 +13,19 @@ mandatory. MyInvois submission remains a separate explicit workflow.
 
 ## Status
 
+- **Live and verified.** The mobile quick-invoice page is deployed on Vercel
+  and has successfully issued a real invoice in AutoCount Cloud Accounting
+  for Wanson Enterprise (M) Sdn Bhd end to end (customer search → item
+  search → review → issue), confirmed via live browser testing against
+  production.
 - **Implemented:** Tasks 1–9, 11 + historical price lookup — company
   isolation, AutoCount client + payload mapping, idempotent invoice service,
   ambiguous-write reconciliation, master-data search, official-PDF spike
   (fail-closed), price history, and the REST API with the Custom GPT Action
-  schema. **334 tests pass.** Plus a mobile quick-invoice web page and
+  schema. **352 tests pass.** Plus a mobile quick-invoice web page and
   Postgres-backed idempotency storage for serverless deployment (Vercel).
-- **Pending:** Task 10 (e-Invoice technical spike), HTTPS deployment +
-  Action registration, then Tasks 13–15 (Share Sheet, security, E2E).
+- **Pending:** Task 10 (e-Invoice technical spike), then Tasks 13–15 (Share
+  Sheet, security, E2E).
 - **Blocked:** official PDF sharing — AutoCount documents no PDF/print
   mechanism; the endpoint fails closed until one exists (see
   [`docs/autocount/pdf-spike.md`](docs/autocount/pdf-spike.md)). The mobile
@@ -60,11 +65,27 @@ Design rules:
   fails it, several require manual reconciliation.
 - **Fail closed.** Undocumented AutoCount features (e.g. PDF) raise
   `501 unsupported`; upstream errors are sanitised at the client boundary so
-  no credential, account-book ID, or taxpayer data can leak.
+  no credential, account-book ID, or taxpayer data can leak. A malformed or
+  unexpected AutoCount response (e.g. a create response missing its
+  `location` header) raises `AutoCountDataError` rather than silently
+  reporting success.
 - **Exact money.** All prices serialise as exact decimal strings, never
   binary floats.
 - **No silent e-Invoice.** `submitEInvoice` stays `false`; the issue result
   reports `einvoice.status = not_requested`.
+
+### AutoCount API contract notes
+
+A few parts of AutoCount's Cloud Accounting Integration API are
+under-documented or easy to get wrong; these are captured in code comments
+in `app/autocount/mapping.py` and `app/services/invoice_service.py`, and
+summarised in [`agents.md`](agents.md) — read those before changing invoice
+payload construction or response parsing. In short: `accNo` is a per-line
+field (not on the invoice master), `creditTerm` must match an exact
+`CreditTermKey` configured in AutoCount, and Create Invoice's real success
+response is a bare `201` with only a `location` header — the invoice's
+identity (`docKey`/`docNo`) must be recovered via a follow-up Get Invoice
+call, not assumed from a JSON body.
 
 ## HTTP API
 
@@ -138,6 +159,9 @@ GPT workflow relies on.
 The app deploys as a single Vercel Python Function (FastAPI auto-detected at
 `app/main.py`); the mobile page is served from the same function via
 `StaticFiles`, so there is one project, one origin, no CORS configuration.
+The project is currently deployed at
+`https://autocount-mobile-quick-invoice.vercel.app/` and auto-deploys to
+Production on every push to `main`.
 
 ```bash
 npx vercel link
@@ -161,6 +185,8 @@ at a scratch database and run `pytest tests/unit/test_postgres_request_repositor
 
 ## Documentation
 
+- [`agents.md`](agents.md) — working rules for this repo, plus a running list
+  of AutoCount API gotchas discovered against the live account book
 - [`autocount_mobile_invoice_v1_spec.md`](autocount_mobile_invoice_v1_spec.md) — requirements specification
 - [`autocount_mobile_invoice_v1_plan.md`](autocount_mobile_invoice_v1_plan.md) — implementation plan (Tasks 1–15)
 - [`docs/autocount/pdf-spike.md`](docs/autocount/pdf-spike.md) — official-PDF spike findings
