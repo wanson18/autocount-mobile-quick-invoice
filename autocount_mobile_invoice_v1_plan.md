@@ -16,10 +16,17 @@ Deliver the Sdn Bhd-only private GPT workflow before the standalone PWA:
    Action OpenAPI schema. Keep the Sdn Bhd account book fixed server-side.
 4. Retrieve the official AutoCount PDF and return a short-lived download URL.
 5. Keep `saveApprove: true`, `submitEInvoice: false`, and duplicate protection
-   mandatory. MyInvois remains a separate explicit workflow.
+   mandatory. e-Invoice/MyInvois submission is out of scope for this app —
+   Sofian submits e-Invoice manually outside this workflow.
 
 The two-company selector, standalone PWA, and iPhone Share Sheet follow after
 this launch slice works end to end in the ChatGPT mobile app.
+
+**Scope decision (2026-08-06):** Task 10 (e-Invoice Technical Spike) is
+dropped. e-Invoice/MyInvois submission will be done manually by the user
+outside this app; the backend only needs to keep `submitEInvoice: false` and
+report `einvoice.status = not_requested`, which is already implemented. No
+further e-Invoice integration work is planned.
 
 ## Proposed Structure
 
@@ -240,7 +247,17 @@ Test that returned bytes start with `%PDF`.
 
 Do not use production HTML scraping when no supported mechanism exists. Keep sharing disabled until the spike succeeds.
 
-## Task 10 — e-Invoice Technical Spike
+## Task 10 — e-Invoice Technical Spike (DROPPED — out of scope)
+
+**Status: shed from scope on 2026-08-06.** e-Invoice/MyInvois submission will
+be handled manually by the user outside this app. No e-Invoice submission,
+status-checking, or MyInvois integration will be built. The app keeps
+`submitEInvoice: false` on every issued invoice and reports
+`einvoice.status = not_requested` — already implemented, nothing further
+needed here.
+
+<details>
+<summary>Original spike scope (not being pursued)</summary>
 
 Verify AutoCount support for:
 
@@ -259,6 +276,8 @@ unsupported
 ```
 
 Do not add direct MyInvois integration unless AutoCount documentation explicitly requires that architecture.
+
+</details>
 
 ## Task 11 — REST API
 
@@ -346,7 +365,7 @@ Verify for each company:
 - correct default and overridden price,
 - exactly one AutoCount invoice,
 - AutoCount-generated invoice number,
-- proper e-Invoice status separation,
+- e-Invoice stays `not_requested` (submission is manual, out of scope),
 - official PDF retrieval,
 - iPhone Share Sheet to WhatsApp.
 
@@ -362,7 +381,7 @@ Record test invoice numbers and clean-up or void actions.
 6. REST API
 7. Mobile PWA
 8. PDF spike
-9. e-Invoice spike
+9. ~~e-Invoice spike~~ (dropped — manual submission, see Task 10)
 10. iPhone sharing
 11. Security and acceptance testing
 
@@ -374,5 +393,6 @@ Do not declare production-ready until:
 - duplicate-creation tests pass,
 - ambiguous-write reconciliation passes,
 - the supported AutoCount PDF mechanism is verified,
-- e-Invoice behaviour is verified or clearly marked unsupported,
+- e-Invoice stays `not_requested` (submission is manual, out of scope — see
+  Task 10),
 - and the complete workflow has been tested on an actual iPhone.

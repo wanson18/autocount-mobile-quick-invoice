@@ -1,8 +1,15 @@
 # AutoCount Mobile Quick Invoice V1 — Design Specification
 
-**Date:** 2026-08-01  
+**Date:** 2026-08-01 (amended 2026-08-06)  
 **Status:** Approved V1 design  
 **Primary users:** Wanson Enterprise and Wanson Enterprise (M) Sdn Bhd operations
+
+**Amendment (2026-08-06):** e-Invoice/MyInvois submission is out of scope.
+Sofian submits e-Invoice manually outside this app. Every section below that
+references e-Invoice/MyInvois integration, the e-Invoice spike, or the
+`Submit e-Invoice` checkbox describes work that will not be built —
+`submitEInvoice` stays `false` always and `einvoice.status` stays
+`not_requested`.
 
 ## Current Launch Slice — Private ChatGPT Invoice GPT
 
@@ -266,9 +273,12 @@ Use a test or sandbox account book wherever possible.
 
 Verify the exact supported mechanism for retrieving the official invoice PDF after API creation. WhatsApp sharing remains blocked until confirmed.
 
-### AutoCount e-Invoice spike
+### AutoCount e-Invoice spike (DROPPED — 2026-08-06)
 
-Verify whether AutoCount provides a supported API or integration method to trigger submission and retrieve status. Without such support, V1 creates the normal invoice and shows e-Invoice as unavailable/manual.
+Not being pursued. e-Invoice/MyInvois submission is handled manually by
+Sofian outside this app. V1 creates the normal invoice with
+`submitEInvoice: false` and reports `einvoice.status = not_requested`; no
+further e-Invoice integration is planned.
 
 ## 17. Success Criteria
 

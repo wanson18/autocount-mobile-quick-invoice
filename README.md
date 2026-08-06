@@ -9,7 +9,8 @@ iPhone Share Sheet follow after this launch slice works end to end.
 Current launch priority: **Sdn Bhd-only private Custom GPT workflow** — issue
 via the documented Cloud Accounting Integration API, keep
 `saveApprove: true` / `submitEInvoice: false`, and make duplicate protection
-mandatory. MyInvois submission remains a separate explicit workflow.
+mandatory. e-Invoice/MyInvois submission is out of scope for this app and is
+handled manually by the user.
 
 ## Status
 
@@ -24,8 +25,11 @@ mandatory. MyInvois submission remains a separate explicit workflow.
   (fail-closed), price history, and the REST API with the Custom GPT Action
   schema. **352 tests pass.** Plus a mobile quick-invoice web page and
   Postgres-backed idempotency storage for serverless deployment (Vercel).
-- **Pending:** Task 10 (e-Invoice technical spike), then Tasks 13–15 (Share
-  Sheet, security, E2E).
+- **Out of scope:** Task 10 (e-Invoice technical spike) — dropped 2026-08-06.
+  e-Invoice/MyInvois submission is handled manually by the user outside this
+  app; `submitEInvoice` stays `false` and `einvoice.status` stays
+  `not_requested`.
+- **Pending:** Tasks 13–15 (Share Sheet, security, E2E).
 - **Blocked:** official PDF sharing — AutoCount documents no PDF/print
   mechanism; the endpoint fails closed until one exists (see
   [`docs/autocount/pdf-spike.md`](docs/autocount/pdf-spike.md)). The mobile
