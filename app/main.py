@@ -197,6 +197,9 @@ def custom_openapi() -> dict:
         version=app.version,
         description=app.description,
         routes=app.routes,
+        servers=[
+            {"url": "https://autocount-mobile-quick-invoice.vercel.app", "description": "Production"},
+        ],
     )
     # Custom GPT Actions: side-effecting actions must be marked consequential
     # so ChatGPT confirms with the user before invoking them.
