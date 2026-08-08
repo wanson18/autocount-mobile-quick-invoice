@@ -11,7 +11,9 @@ from app.config import get_company
 from app.dependencies import get_master_data
 from app.models.company import CompanyKey
 from app.models.master_data import (
+    CustomerSearchItem,
     CustomerSearchResponse,
+    DeliveryAddressItem,
     DeliveryAddressListResponse,
 )
 
@@ -23,13 +25,14 @@ async def search_customers(
     company: CompanyKey,
     q: str = Query(default="", max_length=100),
     master=Depends(get_master_data),
-) -> dict:
+) -> CustomerSearchResponse:
     summaries = await master.search_customers(get_company(company), q)
-    return {
-        "data": [
-            {"id": c.id, "code": c.code, "name": c.name} for c in summaries
+    return CustomerSearchResponse(
+        data=[
+            CustomerSearchItem.model_validate(c, from_attributes=True)
+            for c in summaries
         ]
-    }
+    )
 
 
 @router.get("/{company}/customers/{customer_id}/addresses", operation_id="listCustomerAddresses", response_model=DeliveryAddressListResponse)
@@ -37,13 +40,13 @@ async def get_customer_addresses(
     company: CompanyKey,
     customer_id: str,
     master=Depends(get_master_data),
-) -> dict:
+) -> DeliveryAddressListResponse:
     addresses = await master.get_delivery_addresses(
         get_company(company), customer_id
     )
-    return {
-        "data": [
-            {"id": a.id, "label": a.label, "address_text": a.address_text}
+    return DeliveryAddressListResponse(
+        data=[
+            DeliveryAddressItem.model_validate(a, from_attributes=True)
             for a in addresses
         ]
-    }
+    )

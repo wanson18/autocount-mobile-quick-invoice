@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from app.config import get_company
 from app.dependencies import get_master_data
 from app.models.company import CompanyKey
-from app.models.master_data import ProductSearchResponse
+from app.models.master_data import ProductSearchItem, ProductSearchResponse
 
 router = APIRouter(tags=["products"])
 
@@ -19,16 +19,13 @@ async def search_products(
     company: CompanyKey,
     q: str = Query(default="", max_length=100),
     master=Depends(get_master_data),
-) -> dict:
+) -> ProductSearchResponse:
     summaries = await master.search_items(get_company(company), q)
-    return {
-        "data": [
-            {
-                "id": p.id,
-                "code": p.code,
-                "name": p.name,
-                "default_price": str(p.default_price),
-            }
+    return ProductSearchResponse(
+        data=[
+            ProductSearchItem(
+                id=p.id, code=p.code, name=p.name, default_price=str(p.default_price)
+            )
             for p in summaries
         ]
-    }
+    )

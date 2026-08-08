@@ -18,6 +18,8 @@ from decimal import Decimal
 
 from pydantic import BaseModel
 
+from app.models.common import ListResponse
+
 
 @dataclass(frozen=True)
 class CustomerSummary:
@@ -104,8 +106,7 @@ class CustomerSearchItem(BaseModel):
     name: str
 
 
-class CustomerSearchResponse(BaseModel):
-    data: list[CustomerSearchItem]
+CustomerSearchResponse = ListResponse[CustomerSearchItem]
 
 
 class DeliveryAddressItem(BaseModel):
@@ -114,8 +115,7 @@ class DeliveryAddressItem(BaseModel):
     address_text: str
 
 
-class DeliveryAddressListResponse(BaseModel):
-    data: list[DeliveryAddressItem]
+DeliveryAddressListResponse = ListResponse[DeliveryAddressItem]
 
 
 class ProductSearchItem(BaseModel):
@@ -125,5 +125,4 @@ class ProductSearchItem(BaseModel):
     default_price: str
 
 
-class ProductSearchResponse(BaseModel):
-    data: list[ProductSearchItem]
+ProductSearchResponse = ListResponse[ProductSearchItem]

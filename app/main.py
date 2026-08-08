@@ -201,13 +201,6 @@ def custom_openapi() -> dict:
             {"url": "https://autocount-mobile-quick-invoice.vercel.app", "description": "Production"},
         ],
     )
-
-    # Custom GPT Actions: side-effecting actions must be marked consequential
-    # so ChatGPT confirms with the user before invoking them.
-    for path in schema.get("paths", {}).values():
-        for method, operation in path.items():
-            if method.lower() == "post" and operation.get("operationId") == "issueInvoice":
-                operation["x-openai-isConsequential"] = True
     app.openapi_schema = schema
     return schema
 
