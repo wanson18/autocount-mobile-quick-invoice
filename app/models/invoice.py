@@ -16,6 +16,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints
 
+from app.models.common import ItemResponse
 from app.models.company import CompanyKey
 
 NonBlankIdentifier = Annotated[
@@ -73,15 +74,14 @@ class EInvoiceResultItem(BaseModel):
 
 
 class InvoiceIssueData(BaseModel):
-    company: str
+    company: CompanyKey
     invoice_id: str
     invoice_number: str
     price_overrides: list[PriceOverrideItem]
     einvoice: EInvoiceResultItem
 
 
-class InvoiceIssueResponse(BaseModel):
-    data: InvoiceIssueData
+InvoiceIssueResponse = ItemResponse[InvoiceIssueData]
 
 
 class PreviewItem(BaseModel):
@@ -96,5 +96,4 @@ class PreviewData(BaseModel):
     items: list[PreviewItem]
 
 
-class PreviewResponse(BaseModel):
-    data: PreviewData
+PreviewResponse = ItemResponse[PreviewData]
