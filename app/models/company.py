@@ -8,6 +8,8 @@ from enum import Enum
 
 from pydantic import BaseModel
 
+from app.models.common import ListResponse
+
 
 class CompanyKey(str, Enum):
     ENTERPRISE = "enterprise"
@@ -15,9 +17,8 @@ class CompanyKey(str, Enum):
 
 
 class CompanyListItem(BaseModel):
-    key: str
+    key: CompanyKey
     name: str
 
 
-class CompanyListResponse(BaseModel):
-    data: list[CompanyListItem]
+CompanyListResponse = ListResponse[CompanyListItem]
