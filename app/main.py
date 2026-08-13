@@ -19,7 +19,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.api import companies, customers, invoices, products
@@ -64,12 +64,34 @@ app.include_router(customers.router, prefix="/api")
 app.include_router(products.router, prefix="/api")
 app.include_router(invoices.router, prefix="/api")
 
+class RevalidatingStaticFiles(StaticFiles):
+    """Static files the browser must revalidate rather than guess about.
+
+    Starlette sends ``ETag`` and ``Last-Modified`` but no ``Cache-Control``,
+    and a response carrying neither ``Cache-Control`` nor ``Expires`` falls
+    under the browser's heuristic freshness rule (RFC 9111 4.2.2) -- commonly
+    a tenth of the time since ``Last-Modified``. For a page reloaded all day
+    that silently serves a stale ``app.js`` after a deploy, which looks
+    exactly like the deploy not having shipped.
+
+    ``no-cache`` does not mean "do not store"; it means "revalidate before
+    reusing". The ``ETag`` above is what makes that cheap: an unchanged file
+    answers ``304`` with no body, so the cost is one conditional request and
+    the page can never be older than the deployment serving it.
+    """
+
+    def file_response(self, *args: object, **kwargs: object) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers.setdefault("Cache-Control", "no-cache")
+        return response
+
+
 # Serve the mobile quick-invoice page from the same app/origin as the API, so
 # the private deployment is a single Vercel project with no CORS surface to
 # reason about. Mounted last: every /api/* route above already matches first,
 # so this can never shadow the JSON API. html=True serves index.html for "/".
 _STATIC_DIR = Path(__file__).parent / "static"
-app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="static")
+app.mount("/", RevalidatingStaticFiles(directory=_STATIC_DIR, html=True), name="static")
 
 
 def _error(status: int, code: str, message: str, **extra: object) -> JSONResponse:

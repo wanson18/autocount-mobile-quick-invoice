@@ -438,3 +438,39 @@ def test_openapi_schema_never_exposes_account_book_ids(api):
     assert SDN_BHD_AB not in schema_text
     assert KEY_ID not in schema_text
     assert API_KEY not in schema_text
+
+
+# ---------------------------------------------------------------------------
+# static page caching
+# ---------------------------------------------------------------------------
+#
+# Starlette sends ETag and Last-Modified but no Cache-Control, and a response
+# with neither Cache-Control nor Expires falls under the browser's heuristic
+# freshness rule (RFC 9111 4.2.2). That served a stale app.js after a deploy,
+# which is indistinguishable from the deploy not having shipped.
+
+
+def test_the_page_and_its_script_must_be_revalidated(api):
+    client, _, _ = api
+    for path in ("/", "/app.js"):
+        response = client.get(path)
+        assert response.status_code == 200, path
+        assert response.headers["cache-control"] == "no-cache", path
+
+
+def test_revalidating_an_unchanged_script_costs_no_body(api):
+    # no-cache means "revalidate", not "re-download": the ETag turns a
+    # reload into a 304, which is what keeps the header cheap.
+    client, _, _ = api
+    etag = client.get("/app.js").headers["etag"]
+
+    revalidated = client.get("/app.js", headers={"If-None-Match": etag})
+
+    assert revalidated.status_code == 304
+    assert not revalidated.content
+
+
+def test_api_responses_are_not_given_cache_headers(api):
+    # The static override must not leak onto JSON responses.
+    client, _, _ = api
+    assert "cache-control" not in client.get("/api/companies").headers
