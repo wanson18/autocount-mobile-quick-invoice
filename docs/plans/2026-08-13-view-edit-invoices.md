@@ -69,7 +69,9 @@ export AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD=...
 
 or, running locally where `.env` exists, `set -a && source .env && set +a`.
 
-Both account-book variables are required even though only one company is spiked: `app.config._load` validates the whole mapping at once.
+`app.config._load` validates the whole company mapping at once and refuses to start if either account book is missing, so **both** account-book variables must be non-empty and distinct even when only one company is spiked. Only Sdn Bhd is live in AutoCount Cloud, so set the Enterprise variable to an unusable placeholder (for example `placeholder-enterprise-not-configured`); it is never used for an HTTP call when probing `sdn_bhd`. Do not relax the guard in `app/config.py` — it exists to stop a misconfigured server mixing data between books.
+
+Alternatively run it from Actions via `.github/workflows/invoice-update-spike.yml`, which applies that placeholder itself and keeps credentials in repository secrets. Note that `workflow_dispatch` only works once the workflow file is on the default branch.
 
 - [ ] **Step 2: Run the spike**
 

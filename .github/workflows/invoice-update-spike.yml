@@ -9,11 +9,14 @@
 # Secrets — not Variables, which are plaintext and printed in logs):
 #   AUTOCOUNT_API_KEY_ID
 #   AUTOCOUNT_API_KEY
-#   AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE
-#   AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD
+#   AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD        (to probe sdn_bhd)
+#   AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE     (only to probe enterprise)
 #
-# All four account-book/credential values are needed even when probing one
-# company: app.config validates the whole company mapping at once.
+# Only the company being probed needs its account-book secret. app.config
+# validates the whole company mapping at once and refuses to start with one
+# missing, so the run step supplies an unusable placeholder for the other
+# company rather than weakening that guard, which exists to stop a
+# misconfigured server mixing data between books.
 name: Invoice update spike
 
 on:
@@ -77,8 +80,8 @@ jobs:
         env:
           AUTOCOUNT_API_KEY_ID: ${{ secrets.AUTOCOUNT_API_KEY_ID }}
           AUTOCOUNT_API_KEY: ${{ secrets.AUTOCOUNT_API_KEY }}
-          AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE: ${{ secrets.AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE }}
-          AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD: ${{ secrets.AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD }}
+          SECRET_AB_ENTERPRISE: ${{ secrets.AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE }}
+          SECRET_AB_SDN_BHD: ${{ secrets.AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD }}
           # Inputs travel through the environment, never interpolated into the
           # script text: a ${{ }} expression spliced into bash is a command
           # injection waiting for an input containing shell metacharacters.
@@ -88,6 +91,41 @@ jobs:
           IN_CLEANUP_ONLY: ${{ inputs.cleanup_only }}
         run: |
           set -o pipefail
+
+          # app.config validates BOTH companies at once and refuses to start
+          # if either account book is missing -- a deliberate guard so a
+          # misconfigured server cannot silently mix data between books. Only
+          # one company is live in AutoCount Cloud, so the company NOT being
+          # probed gets an unusable placeholder to satisfy that guard. The
+          # probed company must come from a real secret; a placeholder there
+          # would send requests at a nonexistent account book, so it stops.
+          case "$IN_COMPANY" in
+            sdn_bhd)
+              if [ -z "$SECRET_AB_SDN_BHD" ]; then
+                echo "::error::Repository secret AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD is not set."
+                exit 1
+              fi
+              export AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD="$SECRET_AB_SDN_BHD"
+              export AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE="${SECRET_AB_ENTERPRISE:-placeholder-enterprise-not-configured}"
+              ;;
+            enterprise)
+              if [ -z "$SECRET_AB_ENTERPRISE" ]; then
+                echo "::error::Repository secret AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE is not set. Only Sdn Bhd is live in AutoCount Cloud -- probe that instead."
+                exit 1
+              fi
+              export AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE="$SECRET_AB_ENTERPRISE"
+              export AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD="${SECRET_AB_SDN_BHD:-placeholder-sdn-bhd-not-configured}"
+              ;;
+            *)
+              echo "::error::Unknown company: $IN_COMPANY"
+              exit 1
+              ;;
+          esac
+
+          if [ -z "$AUTOCOUNT_API_KEY_ID" ] || [ -z "$AUTOCOUNT_API_KEY" ]; then
+            echo "::error::Repository secrets AUTOCOUNT_API_KEY_ID and AUTOCOUNT_API_KEY must both be set."
+            exit 1
+          fi
 
           if [ -n "$IN_CLEANUP_ONLY" ]; then
             python scripts/spike_invoice_update.py \
