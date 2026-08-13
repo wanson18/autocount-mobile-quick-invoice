@@ -29,6 +29,13 @@
   };
   const ALL_SCREENS = STEPS.concat(VIEW_SCREENS);
 
+  // Two different windows, and they must not be confused: the list shows the
+  // last few days, while an invoice stays editable for far longer. Both are
+  // the server's rules — mirrored here only for the labels, since the server
+  // decides what is listed and what is_editable.
+  const LIST_WINDOW_DAYS = 3;
+  const EDIT_WINDOW_DAYS = 30;
+
   const state = {
     stepIndex: 0,
     view: null,             // null = wizard, else one of VIEW_SCREENS
@@ -112,6 +119,13 @@
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => fn(...args), ms);
     };
+  }
+
+  // AutoCount returns docDate as a datetime ("2026-08-13T00:00:00"); the time
+  // half is always midnight and is noise on screen. Display only — the server
+  // echoes docDate back to AutoCount verbatim, never this trimmed form.
+  function dateOnly(value) {
+    return String(value == null ? "" : value).slice(0, 10);
   }
 
   function money(value) {
@@ -315,6 +329,8 @@
   function renderInvoiceList() {
     document.getElementById("invoice-list-context").innerHTML =
       "<b>" + escapeHtml(state.company ? state.company.name : "") + "</b>";
+    document.getElementById("invoice-list-window").textContent =
+      "Last " + LIST_WINDOW_DAYS + " days";
 
     if (state.loadingInvoices) {
       invoiceListEl.innerHTML = '<div class="empty-hint">Loading...</div>';
@@ -322,7 +338,8 @@
     }
     if (!state.invoices.length) {
       invoiceListEl.innerHTML =
-        '<div class="empty-hint">No invoices issued in the last 30 days.</div>';
+        '<div class="empty-hint">No invoices issued in the last ' +
+        LIST_WINDOW_DAYS + " days.</div>";
       return;
     }
     invoiceListEl.innerHTML = state.invoices
@@ -332,7 +349,7 @@
           '<div class="primary">' + escapeHtml(inv.doc_no) +
           (inv.is_cancelled ? '<span class="badge">Cancelled</span>' : "") +
           "</div>" +
-          '<div class="secondary">' + escapeHtml(inv.doc_date) + " &middot; " +
+          '<div class="secondary">' + escapeHtml(dateOnly(inv.doc_date)) + " &middot; " +
           escapeHtml(inv.debtor_code) + " &middot; RM " + money(inv.total) +
           " &middot; " + inv.line_count + (inv.line_count === 1 ? " line" : " lines") +
           "</div></div>"
@@ -367,10 +384,14 @@
     const inv = state.viewInvoice;
     if (!inv) return;
 
+    // The debtor's name, falling back to the code when AutoCount returned
+    // none — a bare code means nothing to whoever is reading the header.
+    const debtor = inv.debtor_name || inv.debtor_code;
     document.getElementById("invoice-detail-head").innerHTML =
       '<div class="selected-summary"><b>' + escapeHtml(inv.doc_no) + "</b>" +
       (inv.is_cancelled ? '<span class="badge">Cancelled</span>' : "") +
-      "<br />" + escapeHtml(inv.doc_date) + " &middot; " + escapeHtml(inv.debtor_code) +
+      "<br />" + escapeHtml(debtor) +
+      "<br />" + escapeHtml(dateOnly(inv.doc_date)) +
       "</div>";
 
     document.getElementById("invoice-detail-lines").innerHTML = inv.lines
@@ -396,7 +417,8 @@
       : '<div class="readonly-note">' +
         (inv.is_cancelled
           ? "This invoice is cancelled and cannot be changed."
-          : "This invoice is more than 30 days old. Correct it in AutoCount directly.") +
+          : "This invoice is more than " + EDIT_WINDOW_DAYS +
+            " days old. Correct it in AutoCount directly.") +
         "</div>";
 
     const editBtn = document.getElementById("edit-invoice-btn");

@@ -54,6 +54,13 @@ from app.services.price_history import get_price_history
 
 router = APIRouter(tags=["invoices"])
 
+#: How far back the recent-invoice list looks by default. Deliberately much
+#: shorter than ``EDIT_WINDOW_DAYS``: browsing is for "what did I just issue",
+#: where a short list is faster to scan and cheaper to fetch, while an invoice
+#: stays correctable for far longer. The ``days`` parameter opens the window
+#: back out to the edit horizon when an older invoice needs reaching.
+LIST_WINDOW_DAYS = 3
+
 
 @router.post(
     "/invoices",
@@ -126,15 +133,16 @@ async def preview_invoice_prices(
 )
 async def list_invoices(
     company: CompanyKey,
-    days: int = Query(default=EDIT_WINDOW_DAYS, ge=1, le=EDIT_WINDOW_DAYS),
+    days: int = Query(default=LIST_WINDOW_DAYS, ge=1, le=EDIT_WINDOW_DAYS),
     master=Depends(get_master_data),
 ) -> InvoiceListResponse:
     """Recently issued invoices for the selected company, newest first.
 
     Hidden from the OpenAPI schema on purpose: that schema is the Custom GPT
-    Action contract, and browsing invoices is a mobile-page workflow. The
-    window is capped at the edit window because that is as far back as this
-    app can act on an invoice anyway.
+    Action contract, and browsing invoices is a mobile-page workflow.
+
+    Defaults to the short browse window and is capped at the edit window,
+    which is as far back as this app can act on an invoice anyway.
     """
     today = date.today()
     invoices = await master.list_recent_invoices(
@@ -217,6 +225,7 @@ def _detail_item(invoice: InvoiceSummary) -> InvoiceDetailItem:
         doc_no=invoice.doc_no,
         doc_date=invoice.doc_date,
         debtor_code=invoice.debtor_code,
+        debtor_name=invoice.debtor_name,
         total=str(invoice.total),
         is_cancelled=invoice.is_cancelled,
         is_editable=is_editable(invoice),

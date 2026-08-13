@@ -15,6 +15,7 @@ from app.autocount.errors import AutoCountAmbiguousWriteError, AutoCountRejected
 from app.dependencies import get_invoice_edit_service, get_master_data
 from app.main import app
 from app.models.master_data import InvoiceLineSummary, InvoiceSummary
+from app.api.invoices import LIST_WINDOW_DAYS
 from app.services.invoice_edit_service import (
     EDIT_WINDOW_DAYS,
     InvoiceChangedError,
@@ -35,12 +36,14 @@ def invoice(
     doc_date="2026-08-13",
     cancelled=False,
     lines=None,
+    debtor_name="TANL MARKETING",
 ):
     return InvoiceSummary(
         id=doc_key,
         doc_no=doc_no,
         doc_date=doc_date,
         debtor_code="C001",
+        debtor_name=debtor_name,
         total=Decimal("63.00"),
         lines=tuple(
             lines
@@ -137,10 +140,32 @@ def test_list_invoices_returns_exact_string_money(client_with):
     assert row["is_cancelled"] is False
 
 
-def test_list_invoices_defaults_to_the_edit_window(client_with):
+def test_list_invoices_defaults_to_the_browse_window(client_with):
     master = FakeMasterData()
     client = client_with(master)
     client.get("/api/sdn_bhd/invoices")
+
+    _, date_from, date_to = master.list_calls[0]
+    assert (date.fromisoformat(date_to) - date.fromisoformat(date_from)).days == (
+        LIST_WINDOW_DAYS
+    )
+
+
+def test_the_browse_window_is_narrower_than_the_edit_window():
+    # Two different windows: the list shows the last few days because that is
+    # what the operator is actually looking for, while an invoice stays
+    # editable for far longer. Collapsing them back into one constant would
+    # silently change what can be corrected.
+    assert LIST_WINDOW_DAYS == 3
+    assert LIST_WINDOW_DAYS < EDIT_WINDOW_DAYS
+
+
+def test_the_list_window_can_be_widened_to_the_edit_horizon(client_with):
+    # An invoice older than the default browse window may still be editable,
+    # so the window opens as far as the edit window but no further.
+    master = FakeMasterData()
+    client = client_with(master)
+    assert client.get(f"/api/sdn_bhd/invoices?days={EDIT_WINDOW_DAYS}").status_code == 200
 
     _, date_from, date_to = master.list_calls[0]
     assert (date.fromisoformat(date_to) - date.fromisoformat(date_from)).days == (
@@ -179,6 +204,24 @@ def test_list_invoices_rejects_an_unknown_company(client_with):
 # ---------------------------------------------------------------------------
 # detail endpoint
 # ---------------------------------------------------------------------------
+
+
+def test_get_invoice_returns_the_debtor_name_for_the_header(client_with):
+    client = client_with(FakeMasterData())
+    data = client.get("/api/sdn_bhd/invoices/I-000123").json()["data"]
+
+    # A bare debtor code means nothing to a human reading the header.
+    assert data["debtor_name"] == "TANL MARKETING"
+    assert data["debtor_code"] == "C001"
+
+
+def test_a_missing_debtor_name_comes_back_blank_rather_than_absent(client_with):
+    # AutoCount listing rows need not carry debtorName, so the field is always
+    # present and the client decides how to fall back.
+    client = client_with(FakeMasterData([invoice(debtor_name="")]))
+    data = client.get("/api/sdn_bhd/invoices/I-000123").json()["data"]
+
+    assert data["debtor_name"] == ""
 
 
 def test_get_invoice_returns_lines_with_exact_money(client_with):

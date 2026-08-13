@@ -180,6 +180,9 @@ class InvoiceDetailItem(BaseModel):
     doc_no: str
     doc_date: str
     debtor_code: str
+    #: Blank when AutoCount did not return one, so the client can fall back to
+    #: the code rather than render an empty header.
+    debtor_name: str
     total: str
     is_cancelled: bool
     is_editable: bool
