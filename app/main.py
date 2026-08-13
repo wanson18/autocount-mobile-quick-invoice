@@ -34,6 +34,7 @@ from app.autocount.errors import (
 )
 from app.config import CompanyConfigError
 from app.repositories.request_repository import IdempotencyConflictError
+from app.services.invoice_edit_service import InvoiceNotFoundError
 from app.services.invoice_service import (
     InvoiceIssuePendingError,
     InvoiceReconciliationError,
@@ -93,6 +94,13 @@ async def invoice_validation_error_handler(
     request: Request, exc: InvoiceValidationError
 ) -> JSONResponse:
     return _error(400, "invalid_invoice", str(exc))
+
+
+@app.exception_handler(InvoiceNotFoundError)
+async def invoice_not_found_error_handler(
+    request: Request, exc: InvoiceNotFoundError
+) -> JSONResponse:
+    return _error(404, "invoice_not_found", str(exc))
 
 
 @app.exception_handler(InvoiceIssuePendingError)

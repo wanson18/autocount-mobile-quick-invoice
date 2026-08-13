@@ -18,7 +18,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel
 
-from app.models.common import ListResponse
+from app.models.common import ItemResponse, ListResponse
 
 
 @dataclass(frozen=True)
@@ -133,3 +133,48 @@ class ProductSearchItem(BaseModel):
 
 
 ProductSearchResponse = ListResponse[ProductSearchItem]
+
+
+class InvoiceLineItem(BaseModel):
+    """One line of an issued invoice, with money as exact decimal strings."""
+
+    product_code: str
+    description: str
+    quantity: str
+    unit_price: str
+
+
+class InvoiceListItem(BaseModel):
+    """One row of the recent-invoice browse list."""
+
+    id: str
+    doc_no: str
+    doc_date: str
+    debtor_code: str
+    total: str
+    is_cancelled: bool
+    line_count: int
+
+
+InvoiceListResponse = ListResponse[InvoiceListItem]
+
+
+class InvoiceDetailItem(BaseModel):
+    """One issued invoice in full.
+
+    ``is_editable`` is the server's answer, not a hint: the client uses it to
+    decide what to offer, and the write path re-checks the same rule so a
+    caller that ignores it gets rejected anyway.
+    """
+
+    id: str
+    doc_no: str
+    doc_date: str
+    debtor_code: str
+    total: str
+    is_cancelled: bool
+    is_editable: bool
+    lines: list[InvoiceLineItem]
+
+
+InvoiceDetailResponse = ItemResponse[InvoiceDetailItem]

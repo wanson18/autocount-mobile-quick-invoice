@@ -12,9 +12,12 @@
 Prices are serialised as exact strings, never binary floats.
 """
 
-from fastapi import APIRouter, Depends
+from datetime import date, timedelta
+
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 
+from app.autocount.errors import AutoCountRejectedError
 from app.config import get_company
 from app.dependencies import get_invoice_service, get_master_data
 from app.models.company import CompanyKey
@@ -28,6 +31,19 @@ from app.models.invoice import (
     PreviewItem,
     PreviewResponse,
     PriceOverrideItem,
+)
+from app.models.master_data import (
+    InvoiceDetailItem,
+    InvoiceDetailResponse,
+    InvoiceLineItem,
+    InvoiceListItem,
+    InvoiceListResponse,
+    InvoiceSummary,
+)
+from app.services.invoice_edit_service import (
+    EDIT_WINDOW_DAYS,
+    InvoiceNotFoundError,
+    is_editable,
 )
 from app.services.price_history import get_price_history
 
@@ -95,6 +111,97 @@ async def preview_invoice_prices(
                 for item_id, entry in sorted(history.items())
             ],
         )
+    )
+
+
+@router.get(
+    "/{company}/invoices",
+    response_model=InvoiceListResponse,
+    include_in_schema=False,
+)
+async def list_invoices(
+    company: CompanyKey,
+    days: int = Query(default=EDIT_WINDOW_DAYS, ge=1, le=EDIT_WINDOW_DAYS),
+    master=Depends(get_master_data),
+) -> InvoiceListResponse:
+    """Recently issued invoices for the selected company, newest first.
+
+    Hidden from the OpenAPI schema on purpose: that schema is the Custom GPT
+    Action contract, and browsing invoices is a mobile-page workflow. The
+    window is capped at the edit window because that is as far back as this
+    app can act on an invoice anyway.
+    """
+    today = date.today()
+    invoices = await master.list_recent_invoices(
+        get_company(company),
+        date_from=(today - timedelta(days=days)).isoformat(),
+        date_to=today.isoformat(),
+    )
+    return InvoiceListResponse(
+        data=[
+            InvoiceListItem(
+                id=invoice.id,
+                doc_no=invoice.doc_no,
+                doc_date=invoice.doc_date,
+                debtor_code=invoice.debtor_code,
+                total=str(invoice.total),
+                is_cancelled=invoice.is_cancelled,
+                line_count=len(invoice.lines),
+            )
+            for invoice in invoices
+        ]
+    )
+
+
+@router.get(
+    "/{company}/invoices/{doc_no}",
+    response_model=InvoiceDetailResponse,
+    include_in_schema=False,
+)
+async def get_invoice_detail(
+    company: CompanyKey,
+    doc_no: str,
+    master=Depends(get_master_data),
+) -> InvoiceDetailResponse:
+    invoice = await _read_invoice(master, get_company(company), doc_no)
+    return InvoiceDetailResponse(data=_detail_item(invoice))
+
+
+async def _read_invoice(master, company, doc_no: str) -> InvoiceSummary:
+    """Fetch one invoice, turning AutoCount's 404 into a domain error.
+
+    Any other upstream status keeps propagating as ``AutoCountRejectedError``
+    so a real upstream failure still surfaces as a sanitised 502 rather than
+    being mistaken for a missing invoice.
+    """
+    try:
+        return await master.get_invoice(company, doc_no)
+    except AutoCountRejectedError as exc:
+        if exc.status_code == 404:
+            raise InvoiceNotFoundError(
+                f"no invoice {doc_no!r} in the selected company"
+            ) from None
+        raise
+
+
+def _detail_item(invoice: InvoiceSummary) -> InvoiceDetailItem:
+    return InvoiceDetailItem(
+        id=invoice.id,
+        doc_no=invoice.doc_no,
+        doc_date=invoice.doc_date,
+        debtor_code=invoice.debtor_code,
+        total=str(invoice.total),
+        is_cancelled=invoice.is_cancelled,
+        is_editable=is_editable(invoice),
+        lines=[
+            InvoiceLineItem(
+                product_code=line.product_code,
+                description=line.description,
+                quantity=str(line.qty),
+                unit_price=str(line.unit_price),
+            )
+            for line in invoice.lines
+        ],
     )
 
 
