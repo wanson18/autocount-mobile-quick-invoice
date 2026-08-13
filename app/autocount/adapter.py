@@ -199,6 +199,14 @@ class AutoCountMasterDataAdapter:
         same-day invoices, so a caller can render the order it receives.
         Cancelled invoices are included and flagged; presenting them is the
         caller's decision.
+
+        Tolerates a record straddling two pages (``on_repeat="skip"``) rather
+        than failing the whole browse. This window routinely spans more than
+        one page -- the live book returned 126 invoices for three days against
+        a 100-record page -- and AutoCount's listing has no stable order, so a
+        concurrent write can shift the page boundary mid-read. Reconciliation
+        keeps the strict guard; a browse list does not need to be exact to be
+        useful, and an error in its place is strictly worse.
         """
         date_from = self._validate_id(date_from, "date_from")
         date_to = self._validate_id(date_to, "date_to")
@@ -216,6 +224,7 @@ class AutoCountMasterDataAdapter:
             params_for=None,
             body_for=body_for,
             extract=self._invoice_row,
+            on_repeat="skip",
         )
         return sorted(invoices, key=lambda i: (i.doc_date, i.doc_no), reverse=True)
 
@@ -348,14 +357,31 @@ class AutoCountMasterDataAdapter:
         params_for: Callable[[int], dict[str, Any]] | None,
         body_for: Callable[[int], dict[str, Any]] | None,
         extract: Callable[[Any], Any],
+        on_repeat: str = "fail",
     ) -> list[Any]:
         """Page through a documented listing until ``totalCount`` is consumed.
 
-        Every page must declare the same ``totalCount`` as the first page; a
-        repeated normalized record identity across pages, empty data before the
-        total is consumed, overshooting the total, or running past the internal
-        page ceiling all fail closed instead of being silently accepted or
-        looped over forever.
+        Every page must declare the same ``totalCount`` as the first page;
+        empty data before the total is consumed, overshooting the total, or
+        running past the internal page ceiling all fail closed instead of
+        being silently accepted or looped over forever.
+
+        ``on_repeat`` decides what a record appearing on two pages means:
+
+        ``"fail"`` (default)
+            A repeat is a contract violation. Reconciliation matches invoices
+            by identity, so a listing it cannot trust must not be used at all.
+
+        ``"skip"``
+            A repeat is a paging race, not corruption, and the duplicate is
+            dropped. AutoCount's listing has no stable order -- an unfiltered
+            page 1 comes back neither newest- nor oldest-first -- so a write
+            landing between two page requests shifts the boundary and a row
+            can straddle it. That is a snapshot artefact of a busy account
+            book, and failing a browse over it means the operator sees an
+            error instead of their invoices. Paging stops when a page
+            contributes nothing new, since a page that only repeats what is
+            already collected is not making progress.
         """
         collected: list[Any] = []
         seen: set[str] = set()
@@ -376,14 +402,18 @@ class AutoCountMasterDataAdapter:
                 raise AutoCountDataError(
                     "AutoCount listing declared an inconsistent record total"
                 )
+            added = 0
             for row in data:
                 item = extract(row)
                 if item.id in seen:
-                    raise AutoCountDataError(
-                        "AutoCount listing repeated a record across pages"
-                    )
+                    if on_repeat == "fail":
+                        raise AutoCountDataError(
+                            "AutoCount listing repeated a record across pages"
+                        )
+                    continue
                 seen.add(item.id)
                 collected.append(item)
+                added += 1
             if len(collected) > total:
                 raise AutoCountDataError(
                     "AutoCount listing exceeded its declared record total"
@@ -391,9 +421,15 @@ class AutoCountMasterDataAdapter:
             if len(collected) == total:
                 return collected
             if not data:
+                if on_repeat == "skip":
+                    return collected
                 raise AutoCountDataError(
                     "AutoCount listing ended before its declared record total"
                 )
+            # A page that repeated everything it returned cannot be advanced
+            # past; asking for the next one would loop on the same boundary.
+            if added == 0:
+                return collected
             if page >= _LISTING_PAGE_LIMIT:
                 raise AutoCountDataError(
                     "AutoCount listing required more pages than allowed"

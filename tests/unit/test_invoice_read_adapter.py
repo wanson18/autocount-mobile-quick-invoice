@@ -372,3 +372,110 @@ def test_list_recent_invoices_rejects_a_blank_date_bound():
     client, adapter = make_adapter(handler)
     with pytest.raises(ValueError):
         run(client, recent(adapter, date_from="  "))
+
+
+# ---------------------------------------------------------------------------
+# a record straddling two pages
+# ---------------------------------------------------------------------------
+#
+# Live evidence (run 31715378750, sdn_bhd, 3 days): the window held 126
+# invoices against a 100-record page, so browsing always pages. The listing
+# has no stable order -- an unfiltered page 1 came back neither newest- nor
+# oldest-first -- so a write landing between two page requests shifts the
+# boundary and a row can appear on both. That is a snapshot artefact, not
+# corruption, and a browse must survive it.
+
+
+def straddling_pages():
+    """Page 2 repeats page 1's last row, as a shifted boundary would."""
+    shared = invoice_view(doc_key="2", doc_no="I-000002")
+    return {
+        1: {
+            "data": [invoice_view(doc_key="1", doc_no="I-000001"), shared],
+            "totalCount": 3,
+        },
+        2: {
+            "data": [shared, invoice_view(doc_key="3", doc_no="I-000003")],
+            "totalCount": 3,
+        },
+    }
+
+
+def test_a_record_on_two_pages_is_skipped_not_fatal():
+    pages = straddling_pages()
+
+    def handler(request):
+        return httpx.Response(200, json=pages[json.loads(request.content)["page"]])
+
+    client, adapter = make_adapter(handler)
+    invoices = run(client, recent(adapter))
+
+    assert [i.doc_no for i in invoices] == ["I-000003", "I-000002", "I-000001"]
+
+
+def test_the_repeated_record_is_kept_exactly_once():
+    pages = straddling_pages()
+
+    def handler(request):
+        return httpx.Response(200, json=pages[json.loads(request.content)["page"]])
+
+    client, adapter = make_adapter(handler)
+    invoices = run(client, recent(adapter))
+
+    assert [i.id for i in invoices].count("2") == 1
+
+
+def test_paging_stops_when_a_page_adds_nothing_new():
+    # Every row already collected: asking for the next page would loop on the
+    # same boundary forever, so the browse returns what it has.
+    page_one = {
+        "data": [invoice_view(doc_key="1", doc_no="I-000001")],
+        "totalCount": 5,
+    }
+    seen_pages = []
+
+    def handler(request):
+        page = json.loads(request.content)["page"]
+        seen_pages.append(page)
+        return httpx.Response(200, json=page_one)
+
+    client, adapter = make_adapter(handler)
+    invoices = run(client, recent(adapter))
+
+    assert [i.doc_no for i in invoices] == ["I-000001"]
+    assert seen_pages == [1, 2]
+
+
+def test_a_short_listing_still_returns_what_it_has():
+    # The set shrank under the read: fewer records than totalCount promised.
+    pages = {
+        1: {"data": [invoice_view(doc_key="1", doc_no="I-000001")], "totalCount": 4},
+        2: {"data": [], "totalCount": 4},
+    }
+
+    def handler(request):
+        return httpx.Response(200, json=pages[json.loads(request.content)["page"]])
+
+    client, adapter = make_adapter(handler)
+    assert len(run(client, recent(adapter))) == 1
+
+
+def test_reconciliation_still_refuses_a_repeated_record():
+    # search_invoices matches invoices by identity when reconciling an
+    # ambiguous write, so it must keep failing closed rather than dedupe.
+    pages = straddling_pages()
+
+    def handler(request):
+        return httpx.Response(200, json=pages[json.loads(request.content)["page"]])
+
+    client, adapter = make_adapter(handler)
+    with pytest.raises(AutoCountDataError, match="repeated a record"):
+        run(
+            client,
+            lambda: adapter.search_invoices(
+                SDN_BHD,
+                customer_id="C001",
+                date_from="2026-07-14",
+                date_to="2026-08-13",
+            ),
+        )
