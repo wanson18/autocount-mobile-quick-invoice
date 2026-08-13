@@ -8,8 +8,21 @@
     review: "Review", result: "Done",
   };
 
+  // Browsing issued invoices is a branch off the wizard, not another step in
+  // it: these screens have no linear order and must not disturb the "Step N
+  // of 4" numbering. state.view names the active branch screen, or null when
+  // the wizard is in charge.
+  const VIEW_SCREENS = ["mode", "invoiceList", "invoiceDetail"];
+  const VIEW_TITLES = {
+    mode: "Quick Invoice", invoiceList: "Recent Invoices", invoiceDetail: "Invoice",
+  };
+  // Where Back goes from each branch screen; null returns to the wizard.
+  const VIEW_BACK = { mode: null, invoiceList: "mode", invoiceDetail: "invoiceList" };
+  const ALL_SCREENS = STEPS.concat(VIEW_SCREENS);
+
   const state = {
     stepIndex: 0,
+    view: null,             // null = wizard, else one of VIEW_SCREENS
     company: null,          // { key, name }
     customer: null,         // { id, code, name }
     address: null,          // { id, label, address_text }
@@ -18,6 +31,9 @@
     idempotencyKey: null,
     issuing: false,
     issueResult: null,      // { invoice_number, ... } | { error }
+    invoices: [],           // recent invoice list rows
+    viewInvoice: null,      // the invoice open on the detail screen
+    loadingInvoices: false,
   };
 
   function todayISO() {
@@ -90,7 +106,7 @@
   // ---------- Rendering ----------
 
   const screenEls = {};
-  STEPS.forEach((s) => { screenEls[s] = document.querySelector('[data-screen="' + s + '"]'); });
+  ALL_SCREENS.forEach((s) => { screenEls[s] = document.querySelector('[data-screen="' + s + '"]'); });
 
   const headerTitle = document.getElementById("header-title");
   const stepPill = document.getElementById("step-pill");
@@ -109,13 +125,20 @@
   }
 
   function render() {
-    const current = STEPS[state.stepIndex];
-    STEPS.forEach((s) => screenEls[s].classList.toggle("active", s === current));
+    const current = state.view || STEPS[state.stepIndex];
+    ALL_SCREENS.forEach((s) => screenEls[s].classList.toggle("active", s === current));
+
+    if (state.view) {
+      renderViewScreen(current);
+      return;
+    }
+
     headerTitle.textContent = STEP_TITLES[current];
     stepPill.textContent = current === "result" ? "Done" : "Step " + (state.stepIndex + 1) + " of 4";
     stepPill.style.display = current === "result" ? "none" : "inline-block";
 
     backBtn.style.display = (current === "company" || current === "result") ? "none" : "block";
+    nextBtn.style.display = "block";
     nextBtn.textContent = current === "review" ? "Issue Invoice" : "Next";
     nextBtn.disabled = !canAdvance(current);
     actionbar.style.display = current === "result" ? "none" : "flex";
@@ -125,6 +148,20 @@
     if (current === "items") renderItemsScreen();
     if (current === "review") renderReviewScreen();
     if (current === "result") renderResultScreen();
+  }
+
+  // Branch screens navigate by tapping a card or a row, so the wizard's Next
+  // button has nothing to do and is hidden rather than left dead on screen.
+  function renderViewScreen(current) {
+    headerTitle.textContent = VIEW_TITLES[current];
+    stepPill.style.display = "none";
+    backBtn.style.display = "block";
+    nextBtn.style.display = "none";
+    actionbar.style.display = "flex";
+
+    if (current === "mode") renderModeScreen();
+    if (current === "invoiceList") renderInvoiceList();
+    if (current === "invoiceDetail") renderInvoiceDetail();
   }
 
   function canAdvance(screen) {
@@ -173,6 +210,134 @@
       const label = card.textContent;
       card.classList.toggle("selected", !!(state.company && state.company.name === label));
     });
+  }
+
+  // ---------- Branch: new invoice or browse issued ones ----------
+
+  function renderModeScreen() {
+    document.getElementById("mode-context").innerHTML =
+      "<b>" + escapeHtml(state.company ? state.company.name : "") + "</b>";
+  }
+
+  document.getElementById("mode-new").addEventListener("click", () => {
+    state.view = null;
+    state.stepIndex = STEPS.indexOf("customer");
+    showBanner(null);
+    render();
+  });
+
+  document.getElementById("mode-view").addEventListener("click", () => {
+    state.view = "invoiceList";
+    showBanner(null);
+    render();
+    loadInvoiceList();
+  });
+
+  // ---------- Branch: recent invoices ----------
+
+  const invoiceListEl = document.getElementById("invoice-list");
+
+  async function loadInvoiceList() {
+    if (!state.company) return;
+    state.loadingInvoices = true;
+    invoiceListEl.innerHTML = '<div class="empty-hint">Loading...</div>';
+    try {
+      state.invoices = await apiGet("/" + state.company.key + "/invoices");
+    } catch (e) {
+      state.invoices = [];
+      showBanner("Could not load invoices: " + e.message);
+    } finally {
+      state.loadingInvoices = false;
+    }
+    if (state.view === "invoiceList") renderInvoiceList();
+  }
+
+  function renderInvoiceList() {
+    document.getElementById("invoice-list-context").innerHTML =
+      "<b>" + escapeHtml(state.company ? state.company.name : "") + "</b>";
+
+    if (state.loadingInvoices) {
+      invoiceListEl.innerHTML = '<div class="empty-hint">Loading...</div>';
+      return;
+    }
+    if (!state.invoices.length) {
+      invoiceListEl.innerHTML =
+        '<div class="empty-hint">No invoices issued in the last 30 days.</div>';
+      return;
+    }
+    invoiceListEl.innerHTML = state.invoices
+      .map(function (inv, index) {
+        return (
+          '<div class="list-item" data-invoice-index="' + index + '">' +
+          '<div class="primary">' + escapeHtml(inv.doc_no) +
+          (inv.is_cancelled ? '<span class="badge">Cancelled</span>' : "") +
+          "</div>" +
+          '<div class="secondary">' + escapeHtml(inv.doc_date) + " &middot; " +
+          escapeHtml(inv.debtor_code) + " &middot; RM " + money(inv.total) +
+          " &middot; " + inv.line_count + (inv.line_count === 1 ? " line" : " lines") +
+          "</div></div>"
+        );
+      })
+      .join("");
+  }
+
+  invoiceListEl.addEventListener("click", (event) => {
+    const row = event.target.closest("[data-invoice-index]");
+    if (!row) return;
+    const invoice = state.invoices[Number(row.dataset.invoiceIndex)];
+    if (invoice) openInvoice(invoice.doc_no);
+  });
+
+  // ---------- Branch: one issued invoice ----------
+
+  async function openInvoice(docNo) {
+    showBanner(null);
+    try {
+      state.viewInvoice = await apiGet(
+        "/" + state.company.key + "/invoices/" + encodeURIComponent(docNo)
+      );
+      state.view = "invoiceDetail";
+      render();
+    } catch (e) {
+      showBanner("Could not open " + docNo + ": " + e.message);
+    }
+  }
+
+  function renderInvoiceDetail() {
+    const inv = state.viewInvoice;
+    if (!inv) return;
+
+    document.getElementById("invoice-detail-head").innerHTML =
+      '<div class="selected-summary"><b>' + escapeHtml(inv.doc_no) + "</b>" +
+      (inv.is_cancelled ? '<span class="badge">Cancelled</span>' : "") +
+      "<br />" + escapeHtml(inv.doc_date) + " &middot; " + escapeHtml(inv.debtor_code) +
+      "</div>";
+
+    document.getElementById("invoice-detail-lines").innerHTML = inv.lines
+      .map(function (line) {
+        return (
+          '<div class="line-card"><div class="line-head">' +
+          '<div class="line-title">' + escapeHtml(line.product_code) + "</div>" +
+          '<div class="line-total">RM ' + money(decMul(line.quantity, line.unit_price)) + "</div>" +
+          "</div>" +
+          '<div class="line-sub">' + escapeHtml(line.description) + "</div>" +
+          '<div class="line-sub">' + escapeHtml(line.quantity) + " &times; RM " +
+          money(line.unit_price) + "</div></div>"
+        );
+      })
+      .join("");
+
+    document.getElementById("invoice-detail-total").textContent = "RM " + money(inv.total);
+
+    // is_editable is the server's answer, so the reason is spelled out rather
+    // than the button just being missing.
+    document.getElementById("invoice-detail-actions").innerHTML = inv.is_editable
+      ? '<div class="readonly-note">Editing lines is coming next.</div>'
+      : '<div class="readonly-note">' +
+        (inv.is_cancelled
+          ? "This invoice is cancelled and cannot be changed."
+          : "This invoice is more than 30 days old. Correct it in AutoCount directly.") +
+        "</div>";
   }
 
   // ---------- Screen 2: Customer + address ----------
@@ -454,9 +619,17 @@
   // ---------- Navigation ----------
 
   backBtn.addEventListener("click", () => {
+    showBanner(null);
+    if (state.view) {
+      // Unwind the branch one screen at a time; leaving it lands back on the
+      // company screen, which is where the branch was entered from.
+      state.view = VIEW_BACK[state.view];
+      if (!state.view) state.stepIndex = STEPS.indexOf("company");
+      render();
+      return;
+    }
     if (state.stepIndex > 0) {
       state.stepIndex -= 1;
-      showBanner(null);
       render();
     }
   });
@@ -464,6 +637,13 @@
   nextBtn.addEventListener("click", async () => {
     const current = STEPS[state.stepIndex];
     showBanner(null);
+    if (current === "company") {
+      // Company chosen: ask what to do with it rather than assuming a new
+      // invoice, now that issued ones can be browsed too.
+      state.view = "mode";
+      render();
+      return;
+    }
     if (current === "review") {
       await issueInvoice();
       return;
@@ -526,6 +706,7 @@
   // "Start another invoice" — long-press-free: tapping the header title
   // on the result screen resets state for a new entry.
   headerTitle.addEventListener("click", () => {
+    if (state.view) return;
     if (STEPS[state.stepIndex] !== "result") return;
     const keepCompany = state.company;
     Object.assign(state, {

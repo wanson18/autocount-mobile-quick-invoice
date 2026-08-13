@@ -92,6 +92,13 @@
   .list-item.selected { border-color: var(--accent); }
   .empty-hint { color: var(--muted); font-size: 13.5px; padding: 18px 4px; text-align: center; }
 
+  .badge {
+    display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .02em;
+    padding: 2px 7px; border-radius: 999px; vertical-align: middle; margin-left: 6px;
+    background: #fdecec; color: #b42318;
+  }
+  .readonly-note { color: var(--muted); font-size: 13.5px; padding: 14px 4px; }
+
   .selected-customer-card {
     margin-top: 10px;
     background: var(--panel);
@@ -211,6 +218,34 @@
     <section class="screen active" data-screen="company">
       <div class="field-label">Select company</div>
       <div class="company-grid" id="company-grid"></div>
+    </section>
+
+    <!-- View: what do you want to do with this company? -->
+    <section class="screen" data-screen="mode">
+      <div class="selected-summary" id="mode-context"></div>
+      <div class="company-grid">
+        <div class="choice-card" id="mode-new">New invoice</div>
+        <div class="choice-card" id="mode-view">Recent invoices</div>
+      </div>
+    </section>
+
+    <!-- View: recently issued invoices -->
+    <section class="screen" data-screen="invoiceList">
+      <div class="selected-summary" id="invoice-list-context"></div>
+      <div class="field-label">Last 30 days</div>
+      <div class="list" id="invoice-list"></div>
+    </section>
+
+    <!-- View: one issued invoice -->
+    <section class="screen" data-screen="invoiceDetail">
+      <div id="invoice-detail-head"></div>
+      <div class="field-label">Lines</div>
+      <div id="invoice-detail-lines"></div>
+      <div class="review-total">
+        <span>Total</span>
+        <span id="invoice-detail-total">RM 0.00</span>
+      </div>
+      <div id="invoice-detail-actions"></div>
     </section>
 
     <!-- Screen 2: Customer + address -->
