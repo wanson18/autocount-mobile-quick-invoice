@@ -62,6 +62,43 @@ class InvoicePreviewInput(BaseModel):
     item_ids: list[NonBlankIdentifier] = Field(min_length=1)
 
 
+class InvoiceEditLine(BaseModel):
+    """One line of an edit, whether desired or as the client loaded it.
+
+    Both halves of an edit body are the same shape -- a product and the money
+    on it -- so both use this model; which half a line belongs to is carried
+    by the field it arrives in, not by its type.
+
+    ``item_id`` is AutoCount's product lookup code -- the same string as
+    ``ProductSummary.code`` and the payload's ``productCode`` -- so no
+    separate identifier lookup is involved.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: NonBlankIdentifier
+    quantity: Decimal = Field(gt=0)
+    unit_price: Decimal = Field(ge=0)
+
+
+class InvoiceEditInput(BaseModel):
+    """A confirmed edit to one issued invoice.
+
+    ``lines`` is the complete desired line set, not a diff: AutoCount rewrites
+    detail rows by position and drops any row past the end of the array.
+    ``expected_lines`` is what the client had on screen, used to refuse a save
+    that would clobber a change made in AutoCount meanwhile. The document
+    number comes from the URL path, never the body, and no header field is
+    accepted from the client at all.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    company: CompanyKey
+    expected_lines: list[InvoiceEditLine]
+    lines: list[InvoiceEditLine] = Field(min_length=1)
+
+
 class PriceOverrideItem(BaseModel):
     item_id: str
     original_unit_price: str

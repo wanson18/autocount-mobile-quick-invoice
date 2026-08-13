@@ -19,6 +19,7 @@ from app.autocount import AutoCountClient
 from app.autocount.adapter import AutoCountMasterDataAdapter
 from app.config import get_company
 from app.repositories.request_repository import RequestRepository
+from app.services.invoice_edit_service import InvoiceEditService
 from app.services.invoice_service import InvoiceService
 
 ENV_KEY_ID = "AUTOCOUNT_API_KEY_ID"
@@ -39,6 +40,7 @@ _client_instance: AutoCountClient | None = None
 _master_data_instance: AutoCountMasterDataAdapter | None = None
 _repository_instance: object | None = None
 _service_instance: InvoiceService | None = None
+_edit_service_instance: InvoiceEditService | None = None
 
 
 def _get_client() -> AutoCountClient:
@@ -88,3 +90,19 @@ def get_invoice_service() -> InvoiceService:
             requests=_get_repository(),
         )
     return _service_instance
+
+
+def get_invoice_edit_service() -> InvoiceEditService:
+    """The edit path's service.
+
+    Takes no request repository: a full-state update is idempotent by
+    construction, so unlike creation there is no key to record or replay.
+    """
+    global _edit_service_instance
+    if _edit_service_instance is None:
+        _edit_service_instance = InvoiceEditService(
+            company_resolver=get_company,
+            master_data=get_master_data(),
+            client=_get_client(),
+        )
+    return _edit_service_instance

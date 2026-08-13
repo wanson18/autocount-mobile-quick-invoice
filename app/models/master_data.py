@@ -18,7 +18,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel
 
-from app.models.common import ListResponse
+from app.models.common import ItemResponse, ListResponse
 
 
 @dataclass(frozen=True)
@@ -74,11 +74,18 @@ class PriceHistory:
 
 @dataclass(frozen=True)
 class InvoiceLineSummary:
-    """One detail line of an existing AutoCount invoice."""
+    """One detail line of an existing AutoCount invoice.
+
+    ``description`` is what AutoCount stored on the line, kept so a
+    line-editing screen can show product names without one master-data call
+    per line. It defaults to blank because the listing rows used for price
+    history and reconciliation match on code, quantity, and price only.
+    """
 
     product_code: str
     qty: Decimal
     unit_price: Decimal
+    description: str = ""
 
 
 @dataclass(frozen=True)
@@ -98,6 +105,15 @@ class InvoiceSummary:
     total: Decimal
     lines: tuple[InvoiceLineSummary, ...]
     is_cancelled: bool = False
+    #: The remaining mandatory header fields of AutoCount's invoice master.
+    #: An update must echo all five back (``docDate`` and ``debtorCode`` are
+    #: above); ``master`` cannot be omitted from an Update Invoice body. They
+    #: default to blank because invoice *listing* rows are consumed by price
+    #: history and reconciliation, which never write and need not carry them;
+    #: the edit path rejects a blank before building a payload.
+    debtor_name: str = ""
+    credit_term: str = ""
+    sales_location: str = ""
 
 
 class CustomerSearchItem(BaseModel):
@@ -126,3 +142,54 @@ class ProductSearchItem(BaseModel):
 
 
 ProductSearchResponse = ListResponse[ProductSearchItem]
+
+
+class InvoiceLineItem(BaseModel):
+    """One line of an issued invoice, with money as exact decimal strings."""
+
+    product_code: str
+    description: str
+    quantity: str
+    unit_price: str
+
+
+class InvoiceListItem(BaseModel):
+    """One row of the recent-invoice browse list."""
+
+    id: str
+    doc_no: str
+    doc_date: str
+    debtor_code: str
+    #: Blank when AutoCount did not return one, so the client can fall back to
+    #: the code rather than render an empty row.
+    debtor_name: str
+    total: str
+    is_cancelled: bool
+    line_count: int
+
+
+InvoiceListResponse = ListResponse[InvoiceListItem]
+
+
+class InvoiceDetailItem(BaseModel):
+    """One issued invoice in full.
+
+    ``is_editable`` is the server's answer, not a hint: the client uses it to
+    decide what to offer, and the write path re-checks the same rule so a
+    caller that ignores it gets rejected anyway.
+    """
+
+    id: str
+    doc_no: str
+    doc_date: str
+    debtor_code: str
+    #: Blank when AutoCount did not return one, so the client can fall back to
+    #: the code rather than render an empty header.
+    debtor_name: str
+    total: str
+    is_cancelled: bool
+    is_editable: bool
+    lines: list[InvoiceLineItem]
+
+
+InvoiceDetailResponse = ItemResponse[InvoiceDetailItem]

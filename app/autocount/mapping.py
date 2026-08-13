@@ -1,10 +1,15 @@
 """Map a confirmed mobile invoice draft to AutoCount's invoice input model."""
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
-from app.models.invoice import InvoiceDraftInput
-from app.models.master_data import CustomerSummary, DeliveryAddress, ProductSummary
+from app.models.invoice import InvoiceDraftInput, InvoiceEditLine
+from app.models.master_data import (
+    CustomerSummary,
+    DeliveryAddress,
+    InvoiceSummary,
+    ProductSummary,
+)
 
 #: Wanson issues every quick-invoice on the same standard terms: cash on
 #: delivery, out of the single HQ sales location. Confirmed with the business
@@ -94,3 +99,80 @@ def map_invoice_payload(
         },
         "saveApprove": True,
     }
+
+
+#: The invoice master's mandatory fields, mapped from ``InvoiceSummary`` to
+#: AutoCount's field names. Update Invoice requires ``master``: a body without
+#: it is rejected with "The Master field is required." (confirmed live, see
+#: docs/autocount/invoice-update-spike.md), so an edit echoes these five back
+#: from the invoice being changed.
+_MASTER_ECHO_FIELDS = (
+    ("docDate", "doc_date"),
+    ("debtorCode", "debtor_code"),
+    ("debtorName", "debtor_name"),
+    ("creditTerm", "credit_term"),
+    ("salesLocation", "sales_location"),
+)
+
+
+def map_invoice_update_payload(
+    invoice: InvoiceSummary,
+    lines: Sequence[InvoiceEditLine],
+    products: Mapping[str, ProductSummary],
+) -> dict[str, Any]:
+    """Build the AutoCount Update Invoice body for a complete desired line set.
+
+    AutoCount's Update Invoice treats ``details`` as a positional array: row N
+    of the request overwrites row N of the stored invoice, and any stored row
+    past the end of the array is deleted
+    (https://accounting-api.autocountcloud.com/documentation/api-methods/invoice/update-invoice/).
+    The documented way to leave a row alone is an empty ``{}`` in its slot,
+    but this builder never emits one: it spells out every surviving row in
+    full, so removing the middle line of three is just sending rows one and
+    three. That makes the request absolute desired state, which is what lets a
+    timed-out write be resolved by re-reading instead of guessed at.
+
+    ``master`` carries only the five mandatory fields, echoed verbatim from
+    the invoice being edited -- ``docDate`` included, which AutoCount returns
+    as a datetime and which must not be reformatted. Every optional header
+    field is left unsent and is preserved rather than blanked; that is how a
+    line edit leaves the header alone. A blank mandatory field is rejected
+    here so the reason stays legible instead of arriving as an opaque
+    upstream 400.
+
+    ``description`` comes from the resolved product master, exactly as
+    ``map_invoice_payload`` does on create, so an edited invoice carries the
+    same descriptions a freshly created one would.
+    """
+    if not lines:
+        raise ValueError("an invoice must keep at least one line")
+
+    master: dict[str, Any] = {}
+    for field, attribute in _MASTER_ECHO_FIELDS:
+        value = getattr(invoice, attribute, "")
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(
+                f"invoice {invoice.doc_no} is missing the mandatory master "
+                f"field {field!r}; it cannot be echoed back on an update"
+            )
+        master[field] = value
+
+    details: list[dict[str, Any]] = []
+    for line in lines:
+        product = products.get(line.item_id)
+        if product is None or product.id != line.item_id or product.code != line.item_id:
+            raise ValueError(f"resolved product does not match item {line.item_id}")
+        details.append(
+            {
+                "productCode": product.code,
+                "description": product.name,
+                # Decimal, not str(): app.autocount.client encodes Decimal as
+                # an exact bare JSON number. A quoted decimal fails with a
+                # System.Decimal conversion error and float() would risk
+                # silently rounding a price.
+                "qty": line.quantity,
+                "unitPrice": line.unit_price,
+                "accNo": DEFAULT_ACC_NO,
+            }
+        )
+    return {"master": master, "details": details}

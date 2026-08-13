@@ -12,15 +12,22 @@
 Prices are serialised as exact strings, never binary floats.
 """
 
-from fastapi import APIRouter, Depends
+from datetime import date, timedelta
+
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 
 from app.config import get_company
-from app.dependencies import get_invoice_service, get_master_data
+from app.dependencies import (
+    get_invoice_edit_service,
+    get_invoice_service,
+    get_master_data,
+)
 from app.models.company import CompanyKey
 from app.models.invoice import (
     EInvoiceResultItem,
     InvoiceDraftInput,
+    InvoiceEditInput,
     InvoiceIssueData,
     InvoiceIssueResponse,
     InvoicePreviewInput,
@@ -29,9 +36,37 @@ from app.models.invoice import (
     PreviewResponse,
     PriceOverrideItem,
 )
+from app.models.master_data import (
+    InvoiceDetailItem,
+    InvoiceDetailResponse,
+    InvoiceLineItem,
+    InvoiceListItem,
+    InvoiceListResponse,
+    InvoiceSummary,
+)
+from app.services.invoice_edit_service import (
+    EDIT_WINDOW_DAYS,
+    is_editable,
+    read_invoice,
+)
 from app.services.price_history import get_price_history
 
 router = APIRouter(tags=["invoices"])
+
+#: How far back the recent-invoice list looks by default. Deliberately much
+#: shorter than ``EDIT_WINDOW_DAYS``: browsing is for "what did I just issue",
+#: where a short list is faster to scan and cheaper to fetch, while an invoice
+#: stays correctable for far longer. The ``days`` parameter opens the window
+#: back out to the edit horizon when an older invoice needs reaching.
+#:
+#: Two rather than three because AutoCount's listing serves 100 records a
+#: page and this book runs about 42 invoices a day: three days measured 126
+#: live (run 31715378750), which costs a second round trip at roughly 0.29s,
+#: while two days usually lands under the page boundary. Nothing below 100
+#: is faster than anything else below 100 -- the cost is per page, not per
+#: record, and decoding all 126 is barely a millisecond. Busy days can still
+#: cross 100 and page again; that is correct, just slower.
+LIST_WINDOW_DAYS = 2
 
 
 @router.post(
@@ -95,6 +130,105 @@ async def preview_invoice_prices(
                 for item_id, entry in sorted(history.items())
             ],
         )
+    )
+
+
+@router.get(
+    "/{company}/invoices",
+    response_model=InvoiceListResponse,
+    include_in_schema=False,
+)
+async def list_invoices(
+    company: CompanyKey,
+    days: int = Query(default=LIST_WINDOW_DAYS, ge=1, le=EDIT_WINDOW_DAYS),
+    master=Depends(get_master_data),
+) -> InvoiceListResponse:
+    """Recently issued invoices for the selected company, newest first.
+
+    Hidden from the OpenAPI schema on purpose: that schema is the Custom GPT
+    Action contract, and browsing invoices is a mobile-page workflow.
+
+    Defaults to the short browse window and is capped at the edit window,
+    which is as far back as this app can act on an invoice anyway.
+    """
+    today = date.today()
+    invoices = await master.list_recent_invoices(
+        get_company(company),
+        date_from=(today - timedelta(days=days)).isoformat(),
+        date_to=today.isoformat(),
+    )
+    return InvoiceListResponse(
+        data=[
+            InvoiceListItem(
+                id=invoice.id,
+                doc_no=invoice.doc_no,
+                doc_date=invoice.doc_date,
+                debtor_code=invoice.debtor_code,
+                debtor_name=invoice.debtor_name,
+                total=str(invoice.total),
+                is_cancelled=invoice.is_cancelled,
+                line_count=len(invoice.lines),
+            )
+            for invoice in invoices
+        ]
+    )
+
+
+@router.get(
+    "/{company}/invoices/{doc_no}",
+    response_model=InvoiceDetailResponse,
+    include_in_schema=False,
+)
+async def get_invoice_detail(
+    company: CompanyKey,
+    doc_no: str,
+    master=Depends(get_master_data),
+) -> InvoiceDetailResponse:
+    invoice = await read_invoice(master, get_company(company), doc_no)
+    return InvoiceDetailResponse(data=_detail_item(invoice))
+
+
+@router.put(
+    "/{company}/invoices/{doc_no}",
+    response_model=InvoiceDetailResponse,
+    include_in_schema=False,
+)
+async def update_invoice(
+    company: CompanyKey,
+    doc_no: str,
+    edit: InvoiceEditInput,
+    service=Depends(get_invoice_edit_service),
+) -> InvoiceDetailResponse:
+    """Replace an issued invoice's line set with the confirmed desired state.
+
+    Hidden from the OpenAPI schema like the read endpoints: editing a live
+    invoice is a mobile-page workflow, never a Custom GPT action. The document
+    number comes from the path and the body carries no header field, so an
+    edit can only ever change lines.
+    """
+    updated = await service.edit(doc_no, edit)
+    return InvoiceDetailResponse(data=_detail_item(updated))
+
+
+def _detail_item(invoice: InvoiceSummary) -> InvoiceDetailItem:
+    return InvoiceDetailItem(
+        id=invoice.id,
+        doc_no=invoice.doc_no,
+        doc_date=invoice.doc_date,
+        debtor_code=invoice.debtor_code,
+        debtor_name=invoice.debtor_name,
+        total=str(invoice.total),
+        is_cancelled=invoice.is_cancelled,
+        is_editable=is_editable(invoice),
+        lines=[
+            InvoiceLineItem(
+                product_code=line.product_code,
+                description=line.description,
+                quantity=str(line.qty),
+                unit_price=str(line.unit_price),
+            )
+            for line in invoice.lines
+        ],
     )
 
 

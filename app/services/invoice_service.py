@@ -42,6 +42,10 @@ from app.repositories.request_repository import (
     RequestRepository,
     RequestStatus,
 )
+from app.services.product_resolution import (
+    ProductNotInCompanyError,
+    resolve_products,
+)
 
 #: How wide a creation-time window is searched when reconciling an ambiguous write.
 RECONCILE_WINDOW = timedelta(hours=1)
@@ -239,17 +243,10 @@ class InvoiceService:
     async def _resolve_products(
         self, company: CompanyConfig, draft: InvoiceDraftInput
     ) -> dict[str, ProductSummary]:
-        products: dict[str, ProductSummary] = {}
-        for line in draft.lines:
-            if line.item_id in products:
-                continue
-            product = await self.master_data.get_item(company, line.item_id)
-            if product.id != line.item_id or product.code != line.item_id:
-                raise InvoiceValidationError(
-                    f"item {line.item_id!r} does not belong to selected company"
-                )
-            products[line.item_id] = product
-        return products
+        try:
+            return await resolve_products(self.master_data, company, draft.lines)
+        except ProductNotInCompanyError as exc:
+            raise InvoiceValidationError(str(exc)) from None
 
     async def _complete_issue(
         self,

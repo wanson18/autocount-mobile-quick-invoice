@@ -19,7 +19,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.api import companies, customers, invoices, products
@@ -34,6 +34,13 @@ from app.autocount.errors import (
 )
 from app.config import CompanyConfigError
 from app.repositories.request_repository import IdempotencyConflictError
+from app.services.invoice_edit_service import (
+    InvoiceChangedError,
+    InvoiceEditError,
+    InvoiceEditUnconfirmedError,
+    InvoiceNotEditableError,
+    InvoiceNotFoundError,
+)
 from app.services.invoice_service import (
     InvoiceIssuePendingError,
     InvoiceReconciliationError,
@@ -57,12 +64,34 @@ app.include_router(customers.router, prefix="/api")
 app.include_router(products.router, prefix="/api")
 app.include_router(invoices.router, prefix="/api")
 
+class RevalidatingStaticFiles(StaticFiles):
+    """Static files the browser must revalidate rather than guess about.
+
+    Starlette sends ``ETag`` and ``Last-Modified`` but no ``Cache-Control``,
+    and a response carrying neither ``Cache-Control`` nor ``Expires`` falls
+    under the browser's heuristic freshness rule (RFC 9111 4.2.2) -- commonly
+    a tenth of the time since ``Last-Modified``. For a page reloaded all day
+    that silently serves a stale ``app.js`` after a deploy, which looks
+    exactly like the deploy not having shipped.
+
+    ``no-cache`` does not mean "do not store"; it means "revalidate before
+    reusing". The ``ETag`` above is what makes that cheap: an unchanged file
+    answers ``304`` with no body, so the cost is one conditional request and
+    the page can never be older than the deployment serving it.
+    """
+
+    def file_response(self, *args: object, **kwargs: object) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers.setdefault("Cache-Control", "no-cache")
+        return response
+
+
 # Serve the mobile quick-invoice page from the same app/origin as the API, so
 # the private deployment is a single Vercel project with no CORS surface to
 # reason about. Mounted last: every /api/* route above already matches first,
 # so this can never shadow the JSON API. html=True serves index.html for "/".
 _STATIC_DIR = Path(__file__).parent / "static"
-app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="static")
+app.mount("/", RevalidatingStaticFiles(directory=_STATIC_DIR, html=True), name="static")
 
 
 def _error(status: int, code: str, message: str, **extra: object) -> JSONResponse:
@@ -91,6 +120,45 @@ async def validation_error_handler(
 @app.exception_handler(InvoiceValidationError)
 async def invoice_validation_error_handler(
     request: Request, exc: InvoiceValidationError
+) -> JSONResponse:
+    return _error(400, "invalid_invoice", str(exc))
+
+
+@app.exception_handler(InvoiceNotFoundError)
+async def invoice_not_found_error_handler(
+    request: Request, exc: InvoiceNotFoundError
+) -> JSONResponse:
+    return _error(404, "invoice_not_found", str(exc))
+
+
+# Each edit failure gets its own code so the client can tell "reopen it" from
+# "this is locked". FastAPI dispatches on the exact exception class, and the
+# subclasses are registered ahead of the InvoiceEditError base below, so each
+# keeps its own status rather than collapsing into the catch-all 400.
+@app.exception_handler(InvoiceNotEditableError)
+async def invoice_not_editable_error_handler(
+    request: Request, exc: InvoiceNotEditableError
+) -> JSONResponse:
+    return _error(409, "invoice_not_editable", str(exc))
+
+
+@app.exception_handler(InvoiceChangedError)
+async def invoice_changed_error_handler(
+    request: Request, exc: InvoiceChangedError
+) -> JSONResponse:
+    return _error(409, "invoice_changed", str(exc))
+
+
+@app.exception_handler(InvoiceEditUnconfirmedError)
+async def invoice_edit_unconfirmed_error_handler(
+    request: Request, exc: InvoiceEditUnconfirmedError
+) -> JSONResponse:
+    return _error(409, "edit_unconfirmed", str(exc))
+
+
+@app.exception_handler(InvoiceEditError)
+async def invoice_edit_error_handler(
+    request: Request, exc: InvoiceEditError
 ) -> JSONResponse:
     return _error(400, "invalid_invoice", str(exc))
 
