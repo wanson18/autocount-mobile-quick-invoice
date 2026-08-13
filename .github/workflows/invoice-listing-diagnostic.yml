@@ -1,0 +1,109 @@
+# Read-only diagnosis of AutoCount's invoice listing paging.
+#
+# Separates the three possible causes of "AutoCount listing repeated a record
+# across pages": page being ignored, unstable ordering, or a date filter that
+# does not narrow. See scripts/diagnose_invoice_listing.py.
+#
+# WRITES NOTHING -- only listing reads. No typed confirmation is required
+# because there is nothing to confirm: it cannot create, change or delete a
+# document.
+#
+# Required repository SECRETS:
+#   AUTOCOUNT_API_KEY_ID
+#   AUTOCOUNT_API_KEY
+#   AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD        (to diagnose sdn_bhd)
+#   AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE     (only to diagnose enterprise)
+name: Invoice listing diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "Account book to read"
+        required: true
+        type: choice
+        options:
+          - sdn_bhd
+          - enterprise
+        default: sdn_bhd
+      days:
+        description: "Window size in days (the app's browse window is 3)"
+        required: true
+        type: string
+        default: "3"
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install the app package
+        run: pip install -e .
+
+      - name: Diagnose the listing
+        env:
+          AUTOCOUNT_API_KEY_ID: ${{ secrets.AUTOCOUNT_API_KEY_ID }}
+          AUTOCOUNT_API_KEY: ${{ secrets.AUTOCOUNT_API_KEY }}
+          SECRET_AB_ENTERPRISE: ${{ secrets.AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE }}
+          SECRET_AB_SDN_BHD: ${{ secrets.AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD }}
+          # Inputs travel through the environment, never interpolated into the
+          # script text, so an input carrying shell metacharacters cannot
+          # become a command.
+          IN_COMPANY: ${{ inputs.company }}
+          IN_DAYS: ${{ inputs.days }}
+        run: |
+          set -o pipefail
+
+          # app.config validates both companies at once; only one is live in
+          # AutoCount Cloud, so the other gets an unusable placeholder.
+          case "$IN_COMPANY" in
+            sdn_bhd)
+              if [ -z "$SECRET_AB_SDN_BHD" ]; then
+                echo "::error::Repository secret AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD is not set."
+                exit 1
+              fi
+              export AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD="$SECRET_AB_SDN_BHD"
+              export AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE="${SECRET_AB_ENTERPRISE:-placeholder-enterprise-not-configured}"
+              ;;
+            enterprise)
+              if [ -z "$SECRET_AB_ENTERPRISE" ]; then
+                echo "::error::Repository secret AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE is not set."
+                exit 1
+              fi
+              export AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE="$SECRET_AB_ENTERPRISE"
+              export AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD="${SECRET_AB_SDN_BHD:-placeholder-sdn-bhd-not-configured}"
+              ;;
+            *)
+              echo "::error::Unknown company: $IN_COMPANY"
+              exit 1
+              ;;
+          esac
+
+          if [ ! -f scripts/diagnose_invoice_listing.py ]; then
+            echo "::error::scripts/diagnose_invoice_listing.py is missing from this branch. The workflow runs from the default branch, so the script must be on it too."
+            exit 1
+          fi
+
+          python scripts/diagnose_invoice_listing.py \
+            --company "$IN_COMPANY" --days "$IN_DAYS" 2>&1 | tee diagnosis.txt
+
+      - name: Publish the diagnosis
+        if: always()
+        env:
+          IN_COMPANY: ${{ inputs.company }}
+        run: |
+          {
+            echo "## Invoice listing diagnosis"
+            echo
+            echo "Account book: \`$IN_COMPANY\`"
+            echo
+            echo '```'
+            cat diagnosis.txt 2>/dev/null || echo "(no output captured)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
