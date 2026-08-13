@@ -160,6 +160,9 @@ class InvoiceListItem(BaseModel):
     doc_no: str
     doc_date: str
     debtor_code: str
+    #: Blank when AutoCount did not return one, so the client can fall back to
+    #: the code rather than render an empty row.
+    debtor_name: str
     total: str
     is_cancelled: bool
     line_count: int

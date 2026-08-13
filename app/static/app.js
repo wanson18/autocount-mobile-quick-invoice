@@ -128,6 +128,13 @@
     return String(value == null ? "" : value).slice(0, 10);
   }
 
+  // Who the invoice was issued to. A bare debtor code means nothing to whoever
+  // is reading the screen, so the name wins wherever an invoice names its
+  // customer; the code is the fallback for when AutoCount returned no name.
+  function debtorLabel(invoice) {
+    return invoice.debtor_name || invoice.debtor_code;
+  }
+
   function money(value) {
     const n = typeof value === "string" ? parseFloat(value) : value;
     if (Number.isNaN(n)) return "0.00";
@@ -350,7 +357,7 @@
           (inv.is_cancelled ? '<span class="badge">Cancelled</span>' : "") +
           "</div>" +
           '<div class="secondary">' + escapeHtml(dateOnly(inv.doc_date)) + " &middot; " +
-          escapeHtml(inv.debtor_code) + " &middot; RM " + money(inv.total) +
+          escapeHtml(debtorLabel(inv)) + " &middot; RM " + money(inv.total) +
           " &middot; " + inv.line_count + (inv.line_count === 1 ? " line" : " lines") +
           "</div></div>"
         );
@@ -384,13 +391,10 @@
     const inv = state.viewInvoice;
     if (!inv) return;
 
-    // The debtor's name, falling back to the code when AutoCount returned
-    // none — a bare code means nothing to whoever is reading the header.
-    const debtor = inv.debtor_name || inv.debtor_code;
     document.getElementById("invoice-detail-head").innerHTML =
       '<div class="selected-summary"><b>' + escapeHtml(inv.doc_no) + "</b>" +
       (inv.is_cancelled ? '<span class="badge">Cancelled</span>' : "") +
-      "<br />" + escapeHtml(debtor) +
+      "<br />" + escapeHtml(debtorLabel(inv)) +
       "<br />" + escapeHtml(dateOnly(inv.doc_date)) +
       "</div>";
 

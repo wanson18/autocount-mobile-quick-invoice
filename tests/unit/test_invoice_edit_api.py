@@ -140,6 +140,26 @@ def test_list_invoices_returns_exact_string_money(client_with):
     assert row["is_cancelled"] is False
 
 
+def test_list_rows_carry_the_debtor_name_not_just_the_code(client_with):
+    # A browse row identifies the customer by name; nobody browsing recent
+    # invoices recognises "C001".
+    client = client_with(FakeMasterData())
+    row = client.get("/api/sdn_bhd/invoices").json()["data"][0]
+
+    assert row["debtor_name"] == "TANL MARKETING"
+    assert row["debtor_code"] == "C001"
+
+
+def test_a_list_row_without_a_debtor_name_comes_back_blank(client_with):
+    # AutoCount listing rows need not carry debtorName, so the field is always
+    # present and the client falls back to the code.
+    client = client_with(FakeMasterData([invoice(debtor_name="")]))
+    row = client.get("/api/sdn_bhd/invoices").json()["data"][0]
+
+    assert row["debtor_name"] == ""
+    assert row["debtor_code"] == "C001"
+
+
 def test_list_invoices_defaults_to_the_browse_window(client_with):
     master = FakeMasterData()
     client = client_with(master)

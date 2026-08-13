@@ -157,6 +157,7 @@ async def list_invoices(
                 doc_no=invoice.doc_no,
                 doc_date=invoice.doc_date,
                 debtor_code=invoice.debtor_code,
+                debtor_name=invoice.debtor_name,
                 total=str(invoice.total),
                 is_cancelled=invoice.is_cancelled,
                 line_count=len(invoice.lines),
