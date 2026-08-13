@@ -1,0 +1,133 @@
+# Manually-triggered probe of AutoCount's invoice update capability.
+#
+# Answers the three undocumented questions the view-and-edit design rests on
+# (see docs/specs/2026-08-13-view-edit-invoices-design.md). Never runs on
+# push or schedule: it writes to a live accounting book, so it fires only
+# when a human clicks "Run workflow".
+#
+# Required repository SECRETS (Settings > Secrets and variables > Actions >
+# Secrets — not Variables, which are plaintext and printed in logs):
+#   AUTOCOUNT_API_KEY_ID
+#   AUTOCOUNT_API_KEY
+#   AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE
+#   AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD
+#
+# All four account-book/credential values are needed even when probing one
+# company: app.config validates the whole company mapping at once.
+name: Invoice update spike
+
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "Account book to probe"
+        required: true
+        type: choice
+        options:
+          - sdn_bhd
+          - enterprise
+        default: sdn_bhd
+      confirm:
+        description: 'Type "yes" — this creates and deletes a REAL invoice'
+        required: true
+        type: string
+        default: "no"
+      customer:
+        description: "Optional customer/debtor code (blank = first active)"
+        required: false
+        type: string
+      item:
+        description: "Optional item code (blank = first active products)"
+        required: false
+        type: string
+      cleanup_only:
+        description: "Optional docNo to delete instead of running the probe"
+        required: false
+        type: string
+
+# The probe mutates a live account book; one at a time, and never cancelled
+# mid-write, so a run cannot be interrupted between creating the throwaway
+# invoice and deleting it.
+concurrency:
+  group: invoice-update-spike
+  cancel-in-progress: false
+
+jobs:
+  spike:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Refuse to run without confirmation
+        if: inputs.confirm != 'yes'
+        run: |
+          echo "::error::Set the confirm input to 'yes'. This workflow creates and deletes a real invoice in a live AutoCount account book."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install the app package
+        run: pip install -e .
+
+      - name: Run the spike
+        id: spike
+        env:
+          AUTOCOUNT_API_KEY_ID: ${{ secrets.AUTOCOUNT_API_KEY_ID }}
+          AUTOCOUNT_API_KEY: ${{ secrets.AUTOCOUNT_API_KEY }}
+          AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE: ${{ secrets.AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE }}
+          AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD: ${{ secrets.AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD }}
+          # Inputs travel through the environment, never interpolated into the
+          # script text: a ${{ }} expression spliced into bash is a command
+          # injection waiting for an input containing shell metacharacters.
+          IN_COMPANY: ${{ inputs.company }}
+          IN_CUSTOMER: ${{ inputs.customer }}
+          IN_ITEM: ${{ inputs.item }}
+          IN_CLEANUP_ONLY: ${{ inputs.cleanup_only }}
+        run: |
+          set -o pipefail
+
+          if [ -n "$IN_CLEANUP_ONLY" ]; then
+            python scripts/spike_invoice_update.py \
+              --company "$IN_COMPANY" \
+              --cleanup-only "$IN_CLEANUP_ONLY" 2>&1 | tee spike-output.txt
+            exit "${PIPESTATUS[0]}"
+          fi
+
+          # Array, not a string: quoting survives, and an empty optional
+          # argument never collapses into an accidental positional.
+          ARGS=(--company "$IN_COMPANY" --confirm)
+          [ -n "$IN_CUSTOMER" ] && ARGS+=(--customer "$IN_CUSTOMER")
+          [ -n "$IN_ITEM" ] && ARGS+=(--item "$IN_ITEM")
+
+          # A NO answer is a valid, useful finding, so the step must not fail
+          # before the summary is published.
+          set +e
+          python scripts/spike_invoice_update.py "${ARGS[@]}" 2>&1 | tee spike-output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the findings
+        if: always()
+        env:
+          IN_COMPANY: ${{ inputs.company }}
+        run: |
+          {
+            echo "## Invoice update spike"
+            echo
+            echo "Account book: \`$IN_COMPANY\`"
+            echo
+            echo '```'
+            cat spike-output.txt 2>/dev/null || echo "(no output captured)"
+            echo '```'
+            echo
+            echo "Paste this block back into the Claude session to unblock tasks 5-7 and 10."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Warn if a throwaway invoice may have survived
+        if: always()
+        run: |
+          if grep -q "delete it by hand\|DELETE FAILED\|may still exist" spike-output.txt 2>/dev/null; then
+            echo "::warning::A throwaway invoice may still exist in AutoCount. Re-run this workflow with cleanup_only set to its document number."
+          fi
