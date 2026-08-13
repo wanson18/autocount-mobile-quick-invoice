@@ -74,11 +74,18 @@ class PriceHistory:
 
 @dataclass(frozen=True)
 class InvoiceLineSummary:
-    """One detail line of an existing AutoCount invoice."""
+    """One detail line of an existing AutoCount invoice.
+
+    ``description`` is what AutoCount stored on the line, kept so a
+    line-editing screen can show product names without one master-data call
+    per line. It defaults to blank because the listing rows used for price
+    history and reconciliation match on code, quantity, and price only.
+    """
 
     product_code: str
     qty: Decimal
     unit_price: Decimal
+    description: str = ""
 
 
 @dataclass(frozen=True)

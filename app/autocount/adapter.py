@@ -180,6 +180,36 @@ class AutoCountMasterDataAdapter:
             extract=self._invoice_row,
         )
 
+    async def get_invoice(
+        self, company: CompanyConfig, invoice_no: str
+    ) -> InvoiceSummary:
+        """One invoice by its AutoCount document number.
+
+        ``GET /invoice?docNo=`` returns the same documented view model
+        (``master`` + ``details``) as an invoice listing row, so it
+        normalises through ``_invoice_row`` unchanged. The returned ``docNo``
+        must match the requested one; a mismatch fails closed rather than
+        silently handing back a different invoice, and the mismatched number
+        is kept out of the message.
+
+        Never cached: a caller reading an invoice back to check what
+        AutoCount currently holds depends on this reflecting the account book
+        right now.
+        """
+        invoice_no = self._validate_id(invoice_no, "invoice_no")
+        response = await self._client.read(
+            company, "GET", "invoice", params={"docNo": invoice_no}
+        )
+        payload = self._json_object(
+            response, "AutoCount returned a malformed invoice payload"
+        )
+        invoice = self._invoice_row(payload)
+        if invoice.doc_no != invoice_no:
+            raise AutoCountDataError(
+                "AutoCount returned a different invoice for the requested document number"
+            )
+        return invoice
+
     async def get_invoice_pdf(
         self, company: CompanyConfig, invoice_id: str
     ) -> bytes:
@@ -453,7 +483,23 @@ class AutoCountMasterDataAdapter:
             unit_price=cls._strict_decimal(
                 detail.get("unitPrice"), "invoice unit price", must_be_positive=False
             ),
+            description=cls._invoice_description(detail),
         )
+
+    @staticmethod
+    def _invoice_description(detail: dict[str, Any]) -> str:
+        """The line's stored description, blank when absent.
+
+        Unlike the identifying fields this is presentational, so an absent
+        value is normal rather than malformed; a non-string is still a
+        contract violation and fails closed.
+        """
+        raw = detail.get("description")
+        if raw is None:
+            return ""
+        if not isinstance(raw, str):
+            raise AutoCountDataError("AutoCount invoice detail description is malformed")
+        return raw.strip()
 
     @staticmethod
     def _invoice_total(master: dict[str, Any]) -> Decimal:
