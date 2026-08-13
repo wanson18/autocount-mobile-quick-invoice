@@ -19,11 +19,16 @@ from fastapi.responses import Response
 
 from app.autocount.errors import AutoCountRejectedError
 from app.config import get_company
-from app.dependencies import get_invoice_service, get_master_data
+from app.dependencies import (
+    get_invoice_edit_service,
+    get_invoice_service,
+    get_master_data,
+)
 from app.models.company import CompanyKey
 from app.models.invoice import (
     EInvoiceResultItem,
     InvoiceDraftInput,
+    InvoiceEditInput,
     InvoiceIssueData,
     InvoiceIssueResponse,
     InvoicePreviewInput,
@@ -165,6 +170,28 @@ async def get_invoice_detail(
 ) -> InvoiceDetailResponse:
     invoice = await _read_invoice(master, get_company(company), doc_no)
     return InvoiceDetailResponse(data=_detail_item(invoice))
+
+
+@router.put(
+    "/{company}/invoices/{doc_no}",
+    response_model=InvoiceDetailResponse,
+    include_in_schema=False,
+)
+async def update_invoice(
+    company: CompanyKey,
+    doc_no: str,
+    edit: InvoiceEditInput,
+    service=Depends(get_invoice_edit_service),
+) -> InvoiceDetailResponse:
+    """Replace an issued invoice's line set with the confirmed desired state.
+
+    Hidden from the OpenAPI schema like the read endpoints: editing a live
+    invoice is a mobile-page workflow, never a Custom GPT action. The document
+    number comes from the path and the body carries no header field, so an
+    edit can only ever change lines.
+    """
+    updated = await service.edit(doc_no, edit)
+    return InvoiceDetailResponse(data=_detail_item(updated))
 
 
 async def _read_invoice(master, company, doc_no: str) -> InvoiceSummary:

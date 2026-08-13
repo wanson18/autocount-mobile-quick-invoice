@@ -34,7 +34,13 @@ from app.autocount.errors import (
 )
 from app.config import CompanyConfigError
 from app.repositories.request_repository import IdempotencyConflictError
-from app.services.invoice_edit_service import InvoiceNotFoundError
+from app.services.invoice_edit_service import (
+    InvoiceChangedError,
+    InvoiceEditError,
+    InvoiceEditUnconfirmedError,
+    InvoiceNotEditableError,
+    InvoiceNotFoundError,
+)
 from app.services.invoice_service import (
     InvoiceIssuePendingError,
     InvoiceReconciliationError,
@@ -101,6 +107,38 @@ async def invoice_not_found_error_handler(
     request: Request, exc: InvoiceNotFoundError
 ) -> JSONResponse:
     return _error(404, "invoice_not_found", str(exc))
+
+
+# Each edit failure gets its own code so the client can tell "reopen it" from
+# "this is locked". FastAPI dispatches on the exact exception class, and the
+# subclasses are registered ahead of the InvoiceEditError base below, so each
+# keeps its own status rather than collapsing into the catch-all 400.
+@app.exception_handler(InvoiceNotEditableError)
+async def invoice_not_editable_error_handler(
+    request: Request, exc: InvoiceNotEditableError
+) -> JSONResponse:
+    return _error(409, "invoice_not_editable", str(exc))
+
+
+@app.exception_handler(InvoiceChangedError)
+async def invoice_changed_error_handler(
+    request: Request, exc: InvoiceChangedError
+) -> JSONResponse:
+    return _error(409, "invoice_changed", str(exc))
+
+
+@app.exception_handler(InvoiceEditUnconfirmedError)
+async def invoice_edit_unconfirmed_error_handler(
+    request: Request, exc: InvoiceEditUnconfirmedError
+) -> JSONResponse:
+    return _error(409, "edit_unconfirmed", str(exc))
+
+
+@app.exception_handler(InvoiceEditError)
+async def invoice_edit_error_handler(
+    request: Request, exc: InvoiceEditError
+) -> JSONResponse:
+    return _error(400, "invalid_invoice", str(exc))
 
 
 @app.exception_handler(InvoiceIssuePendingError)

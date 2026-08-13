@@ -11,11 +11,19 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 
-from app.autocount.errors import AutoCountRejectedError
-from app.dependencies import get_master_data
+from app.autocount.errors import AutoCountAmbiguousWriteError, AutoCountRejectedError
+from app.dependencies import get_invoice_edit_service, get_master_data
 from app.main import app
 from app.models.master_data import InvoiceLineSummary, InvoiceSummary
-from app.services.invoice_edit_service import EDIT_WINDOW_DAYS, is_editable
+from app.services.invoice_edit_service import (
+    EDIT_WINDOW_DAYS,
+    InvoiceChangedError,
+    InvoiceEditError,
+    InvoiceEditUnconfirmedError,
+    InvoiceNotEditableError,
+    InvoiceNotFoundError,
+    is_editable,
+)
 
 TODAY = date(2026, 8, 13)
 
@@ -242,3 +250,138 @@ def test_the_create_endpoint_the_gpt_uses_is_still_published(client_with):
 
     assert "/api/invoices" in paths
     assert "/api/invoices/preview" in paths
+
+
+# ---------------------------------------------------------------------------
+# PUT endpoint
+# ---------------------------------------------------------------------------
+
+
+class FakeEditService:
+    def __init__(self, result=None, error=None):
+        self.result = result if result is not None else invoice()
+        self.error = error
+        self.calls = []
+
+    async def edit(self, doc_no, edit, *, today=None):
+        self.calls.append((doc_no, edit))
+        if self.error:
+            raise self.error
+        return self.result
+
+
+@pytest.fixture
+def edit_client(monkeypatch):
+    def _build(service):
+        monkeypatch.setenv("AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE", "ab-ent")
+        monkeypatch.setenv("AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD", "ab-sdn")
+        app.dependency_overrides[get_invoice_edit_service] = lambda: service
+        return TestClient(app)
+
+    yield _build
+    app.dependency_overrides.clear()
+
+
+VALID_BODY = {
+    "company": "sdn_bhd",
+    "expected_lines": [{"item_id": "ITEM-1", "quantity": "2", "unit_price": "31.50"}],
+    "lines": [{"item_id": "ITEM-1", "quantity": "5", "unit_price": "31.50"}],
+}
+
+
+def test_put_returns_the_updated_invoice(edit_client):
+    service = FakeEditService()
+    client = edit_client(service)
+
+    response = client.put("/api/sdn_bhd/invoices/I-000123", json=VALID_BODY)
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["doc_no"] == "I-000123"
+    assert data["total"] == "63.00"
+    assert service.calls[0][0] == "I-000123"
+
+
+def test_put_passes_the_document_number_from_the_path(edit_client):
+    service = FakeEditService()
+    client = edit_client(service)
+    client.put("/api/sdn_bhd/invoices/CS-034454", json=VALID_BODY)
+
+    assert service.calls[0][0] == "CS-034454"
+
+
+def test_put_rejects_an_empty_line_set(edit_client):
+    client = edit_client(FakeEditService())
+    body = dict(VALID_BODY, lines=[])
+    assert client.put("/api/sdn_bhd/invoices/I-000123", json=body).status_code == 422
+
+
+def test_put_rejects_unknown_body_fields(edit_client):
+    # extra="forbid": no header field can be smuggled in through the edit body.
+    client = edit_client(FakeEditService())
+    for extra in ({"invoice_date": "2026-08-13"}, {"debtor_code": "700-0002"}, {"doc_no": "X"}):
+        body = dict(VALID_BODY, **extra)
+        assert client.put("/api/sdn_bhd/invoices/I-000123", json=body).status_code == 422
+
+
+def test_put_rejects_a_non_positive_quantity(edit_client):
+    client = edit_client(FakeEditService())
+    body = dict(VALID_BODY, lines=[{"item_id": "ITEM-1", "quantity": "0", "unit_price": "1"}])
+    assert client.put("/api/sdn_bhd/invoices/I-000123", json=body).status_code == 422
+
+
+def test_put_rejects_a_negative_unit_price(edit_client):
+    client = edit_client(FakeEditService())
+    body = dict(VALID_BODY, lines=[{"item_id": "ITEM-1", "quantity": "1", "unit_price": "-1"}])
+    assert client.put("/api/sdn_bhd/invoices/I-000123", json=body).status_code == 422
+
+
+@pytest.mark.parametrize(
+    "error,status,code",
+    [
+        (InvoiceNotFoundError("gone"), 404, "invoice_not_found"),
+        (InvoiceNotEditableError("locked"), 409, "invoice_not_editable"),
+        (InvoiceChangedError("changed"), 409, "invoice_changed"),
+        (InvoiceEditUnconfirmedError("unconfirmed"), 409, "edit_unconfirmed"),
+        (InvoiceEditError("bad item"), 400, "invalid_invoice"),
+    ],
+)
+def test_edit_failures_map_to_structured_errors(edit_client, error, status, code):
+    client = edit_client(FakeEditService(error=error))
+    response = client.put("/api/sdn_bhd/invoices/I-000123", json=VALID_BODY)
+
+    assert response.status_code == status
+    assert response.json()["error"] == code
+    assert "message" in response.json()
+
+
+def test_an_ambiguous_write_surfaces_as_a_retryable_502(edit_client):
+    client = edit_client(FakeEditService(error=AutoCountAmbiguousWriteError("timed out")))
+    response = client.put("/api/sdn_bhd/invoices/I-000123", json=VALID_BODY)
+
+    assert response.status_code == 502
+    assert response.json()["error"] == "autocount_ambiguous_write"
+    assert response.json()["retryable"] is True
+
+
+def test_an_upstream_rejection_is_sanitised_to_502(edit_client):
+    client = edit_client(FakeEditService(error=AutoCountRejectedError(400, "nope")))
+    response = client.put("/api/sdn_bhd/invoices/I-000123", json=VALID_BODY)
+
+    assert response.status_code == 502
+    assert response.json()["error"] == "autocount_rejected"
+
+
+def test_the_put_endpoint_is_absent_from_the_gpt_schema(edit_client):
+    client = edit_client(FakeEditService())
+    schema = client.get("/openapi.json").json()
+
+    assert "/api/{company}/invoices/{doc_no}" not in schema["paths"]
+    # Nothing named for editing should be reachable as a GPT action at all.
+    operations = {
+        op.get("operationId")
+        for path in schema["paths"].values()
+        for op in path.values()
+        if isinstance(op, dict)
+    }
+    assert not any(name and "update" in name.lower() for name in operations)
