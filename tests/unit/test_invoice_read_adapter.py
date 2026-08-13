@@ -110,6 +110,49 @@ def test_get_invoice_normalises_the_documented_view_model():
     assert invoice.lines[0].unit_price == Decimal("31.5")
 
 
+def test_get_invoice_carries_the_header_fields_an_update_must_echo():
+    def handler(request):
+        payload = invoice_view()
+        payload["master"].update(
+            {
+                "debtorName": "TANL MARKETING",
+                "creditTerm": "C.O.D.",
+                "salesLocation": "HQ",
+            }
+        )
+        return httpx.Response(200, json=payload)
+
+    client, adapter = make_adapter(handler)
+    inv = run(client, lambda: adapter.get_invoice(SDN_BHD, "I-000123"))
+
+    assert inv.debtor_name == "TANL MARKETING"
+    assert inv.credit_term == "C.O.D."
+    assert inv.sales_location == "HQ"
+
+
+def test_absent_echo_fields_are_blank_not_an_error():
+    # Listing rows feed price history and reconciliation, which never write;
+    # a row without these must not break them.
+    def handler(request):
+        return httpx.Response(200, json=invoice_view())
+
+    client, adapter = make_adapter(handler)
+    inv = run(client, lambda: adapter.get_invoice(SDN_BHD, "I-000123"))
+
+    assert (inv.debtor_name, inv.credit_term, inv.sales_location) == ("", "", "")
+
+
+def test_a_malformed_echo_field_fails_closed():
+    def handler(request):
+        payload = invoice_view()
+        payload["master"]["creditTerm"] = {"unexpected": "object"}
+        return httpx.Response(200, json=payload)
+
+    client, adapter = make_adapter(handler)
+    with pytest.raises(AutoCountDataError):
+        run(client, lambda: adapter.get_invoice(SDN_BHD, "I-000123"))
+
+
 def test_get_invoice_routes_to_the_selected_account_book():
     captured = []
 

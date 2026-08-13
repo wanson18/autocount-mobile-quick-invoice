@@ -508,7 +508,29 @@ class AutoCountMasterDataAdapter:
             total=cls._invoice_total(master),
             lines=tuple(cls._invoice_detail(detail) for detail in details),
             is_cancelled=cls._invoice_cancelled(master),
+            debtor_name=cls._optional_text(master, "debtorName", "DebtorName"),
+            credit_term=cls._optional_text(master, "creditTerm", "CreditTerm"),
+            sales_location=cls._optional_text(master, "salesLocation", "SalesLocation"),
         )
+
+    @staticmethod
+    def _optional_text(row: dict[str, Any], camel: str, pascal: str) -> str:
+        """A documented two-casing header field, blank when absent.
+
+        Lenient where ``_pick`` is strict: these are only needed when echoing
+        a master back on an update, and a listing row that omits one must not
+        break price history or reconciliation. A non-string is still a
+        contract violation. The edit path rejects a blank before it can reach
+        AutoCount as an empty mandatory field.
+        """
+        value = row.get(camel)
+        if value is None:
+            value = row.get(pascal)
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise AutoCountDataError("AutoCount invoice header field is malformed")
+        return value.strip()
 
     @classmethod
     def _invoice_detail(cls, detail: Any) -> InvoiceLineSummary:

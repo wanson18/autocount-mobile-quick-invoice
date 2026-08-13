@@ -105,6 +105,15 @@ class InvoiceSummary:
     total: Decimal
     lines: tuple[InvoiceLineSummary, ...]
     is_cancelled: bool = False
+    #: The remaining mandatory header fields of AutoCount's invoice master.
+    #: An update must echo all five back (``docDate`` and ``debtorCode`` are
+    #: above); ``master`` cannot be omitted from an Update Invoice body. They
+    #: default to blank because invoice *listing* rows are consumed by price
+    #: history and reconciliation, which never write and need not carry them;
+    #: the edit path rejects a blank before building a payload.
+    debtor_name: str = ""
+    credit_term: str = ""
+    sales_location: str = ""
 
 
 class CustomerSearchItem(BaseModel):
