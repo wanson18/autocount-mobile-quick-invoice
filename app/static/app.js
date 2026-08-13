@@ -221,12 +221,7 @@
   function canSaveEdit(screen) {
     if (state.saving) return false;
     if (!state.editLines.length) return false;
-    const valid = state.editLines.every((l) => {
-      const q = parseFloat(l.quantity);
-      const p = parseFloat(l.unit_price);
-      return q > 0 && p >= 0 && !Number.isNaN(q) && !Number.isNaN(p);
-    });
-    if (!valid) return false;
+    if (!linesValid(state.editLines)) return false;
     // Nothing to save if the line set is untouched — the server would reject
     // it as a no-op edit anyway, and it wastes a live write.
     if (screen === "invoiceEditConfirm") return editHasChanges();
@@ -248,13 +243,72 @@
   function canAdvance(screen) {
     if (screen === "company") return !!state.company;
     if (screen === "customer") return !!(state.customer && state.address);
-    if (screen === "items") return state.lines.length > 0 && allLinesValid();
+    if (screen === "items") return state.lines.length > 0 && linesValid(state.lines);
     if (screen === "review") return !state.issuing;
     return true;
   }
 
-  function allLinesValid() {
-    return state.lines.every((l) => {
+  // ---------- Item picker ----------
+
+  // The wizard and the edit screen both search the same product endpoint and
+  // render the same result rows; only where they draw and what a tap does
+  // differ. Wiring both from here keeps the two from drifting apart -- an
+  // endpoint or markup change lands on both at once. Returns a handle so a
+  // caller can close the picker on navigation.
+  function wireItemPicker(el, onPick) {
+    const search = debounce(async function (q) {
+      if (!state.company) return;
+      el.list.innerHTML = '<div class="empty-hint">Searching...</div>';
+      try {
+        const results = await apiGet(
+          "/" + state.company.key + "/products?q=" + encodeURIComponent(q)
+        );
+        el.list.innerHTML = "";
+        if (!results.length) {
+          el.list.innerHTML = '<div class="empty-hint">No items found</div>';
+          return;
+        }
+        results.forEach((p) => {
+          const item = document.createElement("div");
+          item.className = "list-item";
+          item.innerHTML =
+            '<div class="primary">' + escapeHtml(p.name) + "</div>" +
+            '<div class="secondary">' + escapeHtml(p.code) + " &middot; RM " +
+            money(p.default_price) + "</div>";
+          item.onclick = () => {
+            hide();
+            onPick(p);
+          };
+          el.list.appendChild(item);
+        });
+      } catch (e) {
+        el.list.innerHTML = "";
+        showBanner("Item search failed: " + e.message);
+      }
+    }, 300);
+
+    function hide() {
+      el.picker.style.display = "none";
+    }
+
+    el.toggle.addEventListener("click", () => {
+      const opening = el.picker.style.display === "none";
+      el.picker.style.display = opening ? "block" : "none";
+      el.input.value = "";
+      el.list.innerHTML = "";
+      if (opening) el.input.focus();
+    });
+    el.input.addEventListener("input", (e) => search(e.target.value));
+
+    return { hide };
+  }
+
+  // A new invoice's lines and an edited invoice's lines are the same shape and
+  // carry the same rule: a positive quantity and a non-negative price. One
+  // check, so the wizard and the edit screen cannot disagree about what is
+  // saveable.
+  function linesValid(lines) {
+    return lines.every((l) => {
       const q = parseFloat(l.quantity);
       const p = parseFloat(l.unit_price);
       return q > 0 && p >= 0 && !Number.isNaN(q) && !Number.isNaN(p);
@@ -450,15 +504,31 @@
     }));
     state.view = "invoiceEdit";
     showBanner(null);
-    editItemPicker.style.display = "none";
+    editItemPicker.hide();
     render();
   }
 
   const editLineListEl = document.getElementById("edit-line-list");
-  const editAddItemBtn = document.getElementById("edit-add-item-btn");
-  const editItemPicker = document.getElementById("edit-item-picker");
-  const editItemSearchInput = document.getElementById("edit-item-search");
-  const editItemSearchList = document.getElementById("edit-item-search-list");
+
+  const editItemPicker = wireItemPicker(
+    {
+      toggle: document.getElementById("edit-add-item-btn"),
+      picker: document.getElementById("edit-item-picker"),
+      input: document.getElementById("edit-item-search"),
+      list: document.getElementById("edit-item-search-list"),
+    },
+    // Appended, not inserted: a new row lands at the end of the array, which
+    // is exactly where AutoCount will add it.
+    (p) => {
+      state.editLines.push({
+        item_id: p.id,
+        description: p.name,
+        quantity: "1",
+        unit_price: p.default_price,
+      });
+      render();
+    }
+  );
 
   function renderEditScreen() {
     document.getElementById("edit-context").innerHTML =
@@ -492,70 +562,10 @@
         render();
       };
     });
-    editLineListEl.querySelectorAll(".qty-input").forEach((input) => {
-      input.oninput = () => {
-        state.editLines[parseInt(input.dataset.idx, 10)].quantity = input.value;
-        nextBtn.disabled = !canSaveEdit("invoiceEdit");
-        updateLineTotal(input);
-      };
-    });
-    editLineListEl.querySelectorAll(".price-input").forEach((input) => {
-      input.oninput = () => {
-        state.editLines[parseInt(input.dataset.idx, 10)].unit_price = input.value;
-        nextBtn.disabled = !canSaveEdit("invoiceEdit");
-        updateLineTotal(input);
-      };
+    wireLineInputs(editLineListEl, state.editLines, () => {
+      nextBtn.disabled = !canSaveEdit("invoiceEdit");
     });
   }
-
-  editAddItemBtn.addEventListener("click", () => {
-    editItemPicker.style.display =
-      editItemPicker.style.display === "none" ? "block" : "none";
-    editItemSearchInput.value = "";
-    editItemSearchList.innerHTML = "";
-    if (editItemPicker.style.display === "block") editItemSearchInput.focus();
-  });
-
-  const doEditItemSearch = debounce(async function (q) {
-    if (!state.company) return;
-    editItemSearchList.innerHTML = '<div class="empty-hint">Searching...</div>';
-    try {
-      const results = await apiGet(
-        "/" + state.company.key + "/products?q=" + encodeURIComponent(q)
-      );
-      editItemSearchList.innerHTML = "";
-      if (!results.length) {
-        editItemSearchList.innerHTML = '<div class="empty-hint">No items found</div>';
-        return;
-      }
-      results.forEach((p) => {
-        const item = document.createElement("div");
-        item.className = "list-item";
-        item.innerHTML =
-          '<div class="primary">' + escapeHtml(p.name) + "</div>" +
-          '<div class="secondary">' + escapeHtml(p.code) + " &middot; RM " +
-          money(p.default_price) + "</div>";
-        item.onclick = () => {
-          // Appended, not inserted: a new row lands at the end of the array,
-          // which is exactly where AutoCount will add it.
-          state.editLines.push({
-            item_id: p.id,
-            description: p.name,
-            quantity: "1",
-            unit_price: p.default_price,
-          });
-          editItemPicker.style.display = "none";
-          render();
-        };
-        editItemSearchList.appendChild(item);
-      });
-    } catch (e) {
-      editItemSearchList.innerHTML = "";
-      showBanner("Item search failed: " + e.message);
-    }
-  }, 300);
-
-  editItemSearchInput.addEventListener("input", (e) => doEditItemSearch(e.target.value));
 
   // ---------- Branch: confirm the change ----------
 
@@ -598,6 +608,16 @@
     return '<div class="diff-row ' + kind + '">' + escapeHtml(text) + "</div>";
   }
 
+  // Both halves of the edit body are the same shape, and both send money as
+  // strings so the server parses exact decimals rather than binary floats.
+  function editPayloadLines(lines) {
+    return lines.map((line) => ({
+      item_id: line.item_id,
+      quantity: String(line.quantity),
+      unit_price: String(line.unit_price),
+    }));
+  }
+
   async function saveEdit() {
     if (state.saving) return;
     state.saving = true;
@@ -608,16 +628,8 @@
         "/" + state.company.key + "/invoices/" + encodeURIComponent(state.editDocNo),
         {
           company: state.company.key,
-          expected_lines: state.editOriginal.map((line) => ({
-            item_id: line.item_id,
-            quantity: String(line.quantity),
-            unit_price: String(line.unit_price),
-          })),
-          lines: state.editLines.map((line) => ({
-            item_id: line.item_id,
-            quantity: String(line.quantity),
-            unit_price: String(line.unit_price),
-          })),
+          expected_lines: editPayloadLines(state.editOriginal),
+          lines: editPayloadLines(state.editLines),
         }
       );
       state.viewInvoice = data;
@@ -736,45 +748,18 @@
   const itemsContext = document.getElementById("items-context");
   const invoiceDateInput = document.getElementById("invoice-date");
   const lineListEl = document.getElementById("line-list");
-  const addItemBtn = document.getElementById("add-item-btn");
-  const itemPicker = document.getElementById("item-picker");
-  const itemSearchInput = document.getElementById("item-search");
-  const itemSearchList = document.getElementById("item-search-list");
+  const itemPicker = wireItemPicker(
+    {
+      toggle: document.getElementById("add-item-btn"),
+      picker: document.getElementById("item-picker"),
+      input: document.getElementById("item-search"),
+      list: document.getElementById("item-search-list"),
+    },
+    (p) => addLine(p)
+  );
 
   invoiceDateInput.value = state.invoiceDate;
   invoiceDateInput.addEventListener("change", (e) => { state.invoiceDate = e.target.value; });
-
-  addItemBtn.addEventListener("click", () => {
-    itemPicker.style.display = itemPicker.style.display === "none" ? "block" : "none";
-    itemSearchInput.value = "";
-    itemSearchList.innerHTML = "";
-    if (itemPicker.style.display === "block") itemSearchInput.focus();
-  });
-
-  const doItemSearch = debounce(async function (q) {
-    if (!state.company) return;
-    itemSearchList.innerHTML = '<div class="empty-hint">Searching...</div>';
-    try {
-      const results = await apiGet("/" + state.company.key + "/products?q=" + encodeURIComponent(q));
-      itemSearchList.innerHTML = "";
-      if (results.length === 0) {
-        itemSearchList.innerHTML = '<div class="empty-hint">No items found</div>';
-        return;
-      }
-      results.forEach((p) => {
-        const item = document.createElement("div");
-        item.className = "list-item";
-        item.innerHTML = '<div class="primary">' + escapeHtml(p.name) + '</div><div class="secondary">' + escapeHtml(p.code) + " · RM " + money(p.default_price) + "</div>";
-        item.onclick = () => addLine(p);
-        itemSearchList.appendChild(item);
-      });
-    } catch (e) {
-      itemSearchList.innerHTML = "";
-      showBanner("Item search failed: " + e.message);
-    }
-  }, 300);
-
-  itemSearchInput.addEventListener("input", (e) => doItemSearch(e.target.value));
 
   async function addLine(product) {
     const line = {
@@ -787,7 +772,6 @@
       priceSource: "default",
     };
     state.lines.push(line);
-    itemPicker.style.display = "none";
     render();
     fetchPriceHistoryFor(line);
   }
@@ -847,19 +831,31 @@
     lineListEl.querySelectorAll(".remove-btn").forEach((btn) => {
       btn.onclick = () => removeLine(parseInt(btn.dataset.idx, 10));
     });
-    lineListEl.querySelectorAll(".qty-input").forEach((input) => {
+    wireLineInputs(lineListEl, state.lines, () => {
+      nextBtn.disabled = !canAdvance("items");
+    });
+  }
+
+  // Both line editors carry the same two inputs against the same line shape,
+  // so they bind the same way: write the typed value straight back to the
+  // line, re-check whether the screen can advance, and refresh that card's
+  // total. ``onChange`` is the only difference -- which screen's rule decides.
+  function wireLineInputs(listEl, lines, onChange) {
+    listEl.querySelectorAll(".qty-input").forEach((input) => {
       input.oninput = () => {
-        state.lines[parseInt(input.dataset.idx, 10)].quantity = input.value;
-        nextBtn.disabled = !canAdvance("items");
+        lines[parseInt(input.dataset.idx, 10)].quantity = input.value;
+        onChange();
         updateLineTotal(input);
       };
     });
-    lineListEl.querySelectorAll(".price-input").forEach((input) => {
+    listEl.querySelectorAll(".price-input").forEach((input) => {
       input.oninput = () => {
-        const line = state.lines[parseInt(input.dataset.idx, 10)];
+        const line = lines[parseInt(input.dataset.idx, 10)];
         line.unit_price = input.value;
-        line.priceSourceLabel = null; // manual override
-        nextBtn.disabled = !canAdvance("items");
+        // A typed price is a manual override, so any inherited price hint no
+        // longer describes it. The edit screen shows no hint; harmless there.
+        line.priceSourceLabel = null;
+        onChange();
         updateLineTotal(input);
       };
     });
@@ -939,7 +935,7 @@
   nextBtn.addEventListener("click", async () => {
     if (state.view === "invoiceEdit") {
       showBanner(null);
-      editItemPicker.style.display = "none";
+      editItemPicker.hide();
       state.view = "invoiceEditConfirm";
       render();
       return;
@@ -964,7 +960,7 @@
       return;
     }
     if (current === "items") {
-      itemPicker.style.display = "none";
+      itemPicker.hide();
     }
     state.stepIndex += 1;
     render();

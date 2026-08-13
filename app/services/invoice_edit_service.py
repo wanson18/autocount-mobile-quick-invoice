@@ -26,8 +26,12 @@ from app.autocount.errors import AutoCountAmbiguousWriteError, AutoCountRejected
 from app.autocount.mapping import map_invoice_update_payload
 from app.config import CompanyConfig
 from app.models.company import CompanyKey
-from app.models.invoice import ExpectedLine, InvoiceEditInput, InvoiceEditLine
+from app.models.invoice import InvoiceEditInput, InvoiceEditLine
 from app.models.master_data import InvoiceLineSummary, InvoiceSummary, ProductSummary
+from app.services.product_resolution import (
+    ProductNotInCompanyError,
+    resolve_products,
+)
 
 #: A line set reduced to what an edit compares on: product code, quantity,
 #: unit price, in order. Descriptions and totals are derived, so they are not
@@ -46,6 +50,28 @@ class InvoiceEditError(Exception):
 
 class InvoiceNotFoundError(InvoiceEditError):
     """AutoCount has no invoice with the requested document number."""
+
+
+class InvoiceNotEditableError(InvoiceEditError):
+    """The invoice is cancelled or falls outside the edit window."""
+
+
+class InvoiceChangedError(InvoiceEditError):
+    """The invoice changed in AutoCount since the client loaded it."""
+
+
+class InvoiceEditUnconfirmedError(InvoiceEditError):
+    """A timed-out edit could not be confirmed by re-reading the invoice."""
+
+
+class EditMasterDataPort(Protocol):
+    async def get_invoice(
+        self, company: CompanyConfig, invoice_no: str
+    ) -> InvoiceSummary: ...
+
+    async def get_item(
+        self, company: CompanyConfig, item_id: str
+    ) -> ProductSummary: ...
 
 
 def is_editable(invoice: InvoiceSummary, *, today: date | None = None) -> bool:
@@ -69,26 +95,27 @@ def is_editable(invoice: InvoiceSummary, *, today: date | None = None) -> bool:
     return (today - doc_date) <= timedelta(days=EDIT_WINDOW_DAYS)
 
 
-class InvoiceNotEditableError(InvoiceEditError):
-    """The invoice is cancelled or falls outside the edit window."""
+async def read_invoice(
+    master_data: EditMasterDataPort, company: CompanyConfig, doc_no: str
+) -> InvoiceSummary:
+    """Fetch one invoice, turning AutoCount's 404 into a domain error.
 
+    Any other upstream status keeps propagating as ``AutoCountRejectedError``
+    so a real upstream failure still surfaces as a sanitised 502 rather than
+    being mistaken for a missing invoice.
 
-class InvoiceChangedError(InvoiceEditError):
-    """The invoice changed in AutoCount since the client loaded it."""
-
-
-class InvoiceEditUnconfirmedError(InvoiceEditError):
-    """A timed-out edit could not be confirmed by re-reading the invoice."""
-
-
-class EditMasterDataPort(Protocol):
-    async def get_invoice(
-        self, company: CompanyConfig, invoice_no: str
-    ) -> InvoiceSummary: ...
-
-    async def get_item(
-        self, company: CompanyConfig, item_id: str
-    ) -> ProductSummary: ...
+    Lives here rather than in the API layer because this module owns
+    ``InvoiceNotFoundError``: the read endpoint and the edit path must agree
+    on what "no such invoice" means.
+    """
+    try:
+        return await master_data.get_invoice(company, doc_no)
+    except AutoCountRejectedError as exc:
+        if exc.status_code == 404:
+            raise InvoiceNotFoundError(
+                f"no invoice {doc_no!r} in the selected company"
+            ) from None
+        raise
 
 
 class EditWritePort(Protocol):
@@ -168,19 +195,7 @@ class InvoiceEditService:
         return await self._read(company, doc_no)
 
     async def _read(self, company: CompanyConfig, doc_no: str) -> InvoiceSummary:
-        """Fetch one invoice, turning AutoCount's 404 into a domain error.
-
-        Any other upstream status keeps propagating so a real failure is not
-        mistaken for a missing invoice.
-        """
-        try:
-            return await self.master_data.get_invoice(company, doc_no)
-        except AutoCountRejectedError as exc:
-            if exc.status_code == 404:
-                raise InvoiceNotFoundError(
-                    f"no invoice {doc_no!r} in the selected company"
-                ) from None
-            raise
+        return await read_invoice(self.master_data, company, doc_no)
 
     @staticmethod
     def _stored_state(lines: Sequence[InvoiceLineSummary]) -> LineState:
@@ -188,7 +203,7 @@ class InvoiceEditService:
         return [(line.product_code, line.qty, line.unit_price) for line in lines]
 
     @staticmethod
-    def _requested_state(lines: Sequence[InvoiceEditLine | ExpectedLine]) -> LineState:
+    def _requested_state(lines: Sequence[InvoiceEditLine]) -> LineState:
         """A client's line set, in the same comparable form.
 
         ``item_id`` is AutoCount's product code, so the two shapes line up
@@ -217,21 +232,14 @@ class InvoiceEditService:
     ) -> dict[str, ProductSummary]:
         """Resolve every edited line's product from the selected account book.
 
-        Mirrors the create path: an item is only usable if this company's own
-        book returns it under exactly that code, so an edit can never
-        introduce an item belonging to the other company.
+        The same rule the create path applies, from the same helper: an edit
+        can no more introduce an item belonging to the other company than a
+        new invoice can.
         """
-        products: dict[str, ProductSummary] = {}
-        for line in edit.lines:
-            if line.item_id in products:
-                continue
-            product = await self.master_data.get_item(company, line.item_id)
-            if product.id != line.item_id or product.code != line.item_id:
-                raise InvoiceEditError(
-                    f"item {line.item_id!r} does not belong to selected company"
-                )
-            products[line.item_id] = product
-        return products
+        try:
+            return await resolve_products(self.master_data, company, edit.lines)
+        except ProductNotInCompanyError as exc:
+            raise InvoiceEditError(str(exc)) from None
 
     async def _reconcile(
         self,

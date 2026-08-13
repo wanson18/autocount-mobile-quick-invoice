@@ -17,7 +17,6 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 
-from app.autocount.errors import AutoCountRejectedError
 from app.config import get_company
 from app.dependencies import (
     get_invoice_edit_service,
@@ -47,8 +46,8 @@ from app.models.master_data import (
 )
 from app.services.invoice_edit_service import (
     EDIT_WINDOW_DAYS,
-    InvoiceNotFoundError,
     is_editable,
+    read_invoice,
 )
 from app.services.price_history import get_price_history
 
@@ -177,7 +176,7 @@ async def get_invoice_detail(
     doc_no: str,
     master=Depends(get_master_data),
 ) -> InvoiceDetailResponse:
-    invoice = await _read_invoice(master, get_company(company), doc_no)
+    invoice = await read_invoice(master, get_company(company), doc_no)
     return InvoiceDetailResponse(data=_detail_item(invoice))
 
 
@@ -201,23 +200,6 @@ async def update_invoice(
     """
     updated = await service.edit(doc_no, edit)
     return InvoiceDetailResponse(data=_detail_item(updated))
-
-
-async def _read_invoice(master, company, doc_no: str) -> InvoiceSummary:
-    """Fetch one invoice, turning AutoCount's 404 into a domain error.
-
-    Any other upstream status keeps propagating as ``AutoCountRejectedError``
-    so a real upstream failure still surfaces as a sanitised 502 rather than
-    being mistaken for a missing invoice.
-    """
-    try:
-        return await master.get_invoice(company, doc_no)
-    except AutoCountRejectedError as exc:
-        if exc.status_code == 404:
-            raise InvoiceNotFoundError(
-                f"no invoice {doc_no!r} in the selected company"
-            ) from None
-        raise
 
 
 def _detail_item(invoice: InvoiceSummary) -> InvoiceDetailItem:

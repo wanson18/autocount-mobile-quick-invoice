@@ -15,7 +15,7 @@ import pytest
 from app.autocount.errors import AutoCountAmbiguousWriteError, AutoCountRejectedError
 from app.config import CompanyConfig
 from app.models.company import CompanyKey
-from app.models.invoice import ExpectedLine, InvoiceEditInput, InvoiceEditLine
+from app.models.invoice import InvoiceEditInput, InvoiceEditLine
 from app.models.master_data import InvoiceLineSummary, InvoiceSummary, ProductSummary
 from app.services.invoice_edit_service import (
     InvoiceChangedError,
@@ -106,7 +106,7 @@ def edit_input(lines=None, expected=None):
         expected_lines=expected
         if expected is not None
         else [
-            ExpectedLine(
+            InvoiceEditLine(
                 item_id="ITEM-1", quantity=Decimal("2"), unit_price=Decimal("31.50")
             )
         ],
@@ -177,8 +177,8 @@ def test_removing_a_line_sends_the_shorter_array():
             "CS-034454",
             edit_input(
                 expected=[
-                    ExpectedLine(item_id="ITEM-1", quantity=Decimal("2"), unit_price=Decimal("31.50")),
-                    ExpectedLine(item_id="ITEM-2", quantity=Decimal("1"), unit_price=Decimal("42.00")),
+                    InvoiceEditLine(item_id="ITEM-1", quantity=Decimal("2"), unit_price=Decimal("31.50")),
+                    InvoiceEditLine(item_id="ITEM-2", quantity=Decimal("1"), unit_price=Decimal("42.00")),
                 ],
                 lines=[
                     InvoiceEditLine(item_id="ITEM-1", quantity=Decimal("2"), unit_price=Decimal("31.50"))
@@ -278,8 +278,8 @@ def test_a_reordered_line_set_is_treated_as_changed():
             "CS-034454",
             edit_input(
                 expected=[
-                    ExpectedLine(item_id="ITEM-1", quantity=Decimal("2"), unit_price=Decimal("31.50")),
-                    ExpectedLine(item_id="ITEM-2", quantity=Decimal("1"), unit_price=Decimal("42.00")),
+                    InvoiceEditLine(item_id="ITEM-1", quantity=Decimal("2"), unit_price=Decimal("31.50")),
+                    InvoiceEditLine(item_id="ITEM-2", quantity=Decimal("1"), unit_price=Decimal("42.00")),
                 ]
             ),
             today=TODAY,

@@ -63,22 +63,16 @@ class InvoicePreviewInput(BaseModel):
 
 
 class InvoiceEditLine(BaseModel):
-    """One line of the desired post-edit invoice.
+    """One line of an edit, whether desired or as the client loaded it.
+
+    Both halves of an edit body are the same shape -- a product and the money
+    on it -- so both use this model; which half a line belongs to is carried
+    by the field it arrives in, not by its type.
 
     ``item_id`` is AutoCount's product lookup code -- the same string as
     ``ProductSummary.code`` and the payload's ``productCode`` -- so no
     separate identifier lookup is involved.
     """
-
-    model_config = ConfigDict(extra="forbid")
-
-    item_id: NonBlankIdentifier
-    quantity: Decimal = Field(gt=0)
-    unit_price: Decimal = Field(ge=0)
-
-
-class ExpectedLine(BaseModel):
-    """One line of the invoice as the client loaded it, for the stale guard."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -101,7 +95,7 @@ class InvoiceEditInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     company: CompanyKey
-    expected_lines: list[ExpectedLine]
+    expected_lines: list[InvoiceEditLine]
     lines: list[InvoiceEditLine] = Field(min_length=1)
 
 
