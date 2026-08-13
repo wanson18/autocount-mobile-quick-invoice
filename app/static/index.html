@@ -344,6 +344,12 @@
   </footer>
 </div>
 
-<script src="/app.js"></script>
+<!-- The query string is a cache key, not a parameter. Browsers that loaded
+     this page before app.js carried Cache-Control still hold that copy under
+     heuristic freshness and will not ask for it again for a while; a
+     different URL cannot be answered from that entry, so they fetch it once
+     and pick up the no-cache header that keeps them current from then on.
+     Bump the date only if that situation ever recurs. -->
+<script src="/app.js?v=2026-08-13"></script>
 </body>
 </html>
