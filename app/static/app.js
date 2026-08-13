@@ -33,7 +33,7 @@
   // last few days, while an invoice stays editable for far longer. Both are
   // the server's rules — mirrored here only for the labels, since the server
   // decides what is listed and what is_editable.
-  const LIST_WINDOW_DAYS = 3;
+  const LIST_WINDOW_DAYS = 2;
   const EDIT_WINDOW_DAYS = 30;
 
   const state = {

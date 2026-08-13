@@ -97,6 +97,31 @@ request. `list_recent_invoices` still sorts what it collects by
 `(doc_date, doc_no)` before returning, so the rendered order is stable even
 though the fetch order is not.
 
-It also does not address the window holding more rows than one page. If the
-browse list should be capped rather than complete, that is a product
-decision, not a paging one.
+It also does not, by itself, address the window holding more rows than one
+page — see below.
+
+## Follow-up: the default window is now two days
+
+Paging costs a round trip, and the measurements from the same run put that at
+**~0.29s per page** (0.33s, 0.26s and 0.28s for three separate page fetches).
+Everything else is noise: decoding all 126 rows takes 0.3 ms and normalising
+them to `InvoiceSummary` 1.2 ms.
+
+So the cost is per *page*, not per record, and the only threshold that
+matters is 100. At roughly 42 invoices a day this book produces:
+
+| Window | Invoices | Pages | AutoCount time |
+|---|---|---|---|
+| 3 days | 126 | 2 | ~0.59s |
+| 2 days | ~84 | 1 | ~0.29s |
+| 1 day | ~42 | 1 | ~0.29s |
+
+`LIST_WINDOW_DAYS` dropped from 3 to 2 to sit under the boundary. Going
+lower buys nothing — anything under 100 costs one round trip.
+
+Note what was *not* done: capping the browse by fetching only page 1. Because
+the listing has no stable order, page 1 is an arbitrary 100 of the 126 rather
+than the newest 100, so that would risk hiding the day's invoices. Narrowing
+the date filter is sound precisely because the filter still defines the whole
+set — it just arrives in one page. A busy two days can still cross 100 and
+page again, which is correct, merely slower.

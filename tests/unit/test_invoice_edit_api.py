@@ -176,8 +176,17 @@ def test_the_browse_window_is_narrower_than_the_edit_window():
     # what the operator is actually looking for, while an invoice stays
     # editable for far longer. Collapsing them back into one constant would
     # silently change what can be corrected.
-    assert LIST_WINDOW_DAYS == 3
+    assert LIST_WINDOW_DAYS == 2
     assert LIST_WINDOW_DAYS < EDIT_WINDOW_DAYS
+
+
+def test_the_browse_window_usually_fits_one_listing_page():
+    # AutoCount serves 100 records a page and this book runs about 42
+    # invoices a day, so the default window is sized to stay under the page
+    # boundary: paging costs a round trip, and the second one is the whole
+    # difference. Widening the default without checking that arithmetic
+    # silently doubles the browse's latency.
+    assert LIST_WINDOW_DAYS * 42 < 100
 
 
 def test_the_list_window_can_be_widened_to_the_edit_horizon(client_with):

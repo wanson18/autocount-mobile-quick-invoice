@@ -58,7 +58,15 @@ router = APIRouter(tags=["invoices"])
 #: where a short list is faster to scan and cheaper to fetch, while an invoice
 #: stays correctable for far longer. The ``days`` parameter opens the window
 #: back out to the edit horizon when an older invoice needs reaching.
-LIST_WINDOW_DAYS = 3
+#:
+#: Two rather than three because AutoCount's listing serves 100 records a
+#: page and this book runs about 42 invoices a day: three days measured 126
+#: live (run 31715378750), which costs a second round trip at roughly 0.29s,
+#: while two days usually lands under the page boundary. Nothing below 100
+#: is faster than anything else below 100 -- the cost is per page, not per
+#: record, and decoding all 126 is barely a millisecond. Busy days can still
+#: cross 100 and page again; that is correct, just slower.
+LIST_WINDOW_DAYS = 2
 
 
 @router.post(
