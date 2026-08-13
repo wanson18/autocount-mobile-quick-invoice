@@ -203,3 +203,129 @@ def test_get_invoice_preserves_a_cancelled_flag():
     client, adapter = make_adapter(handler)
     invoice = run(client, lambda: adapter.get_invoice(SDN_BHD, "I-000123"))
     assert invoice.is_cancelled is True
+
+
+# ---------------------------------------------------------------------------
+# list_recent_invoices
+# ---------------------------------------------------------------------------
+
+
+def recent(adapter, date_from="2026-07-14", date_to="2026-08-13"):
+    return lambda: adapter.list_recent_invoices(
+        SDN_BHD, date_from=date_from, date_to=date_to
+    )
+
+
+def test_list_recent_invoices_filters_on_document_date_without_a_debtor():
+    captured = []
+
+    def handler(request):
+        captured.append(request)
+        return httpx.Response(200, json=listing_payload(invoice_view()))
+
+    client, adapter = make_adapter(handler)
+    run(client, recent(adapter))
+
+    body = json.loads(captured[0].content)
+    assert captured[0].url.path == f"/{SDN_BHD_AB}/invoice/listing"
+    assert body["page"] == 1
+    assert body["filter"] == {"date": {"from": "2026-07-14", "to": "2026-08-13"}}
+    assert "debtorCode" not in body["filter"]
+    assert "createdDate" not in body["filter"]
+
+
+def test_list_recent_invoices_returns_newest_first():
+    rows = [
+        invoice_view(doc_key="1", doc_no="I-000001", doc_date="2026-08-01"),
+        invoice_view(doc_key="3", doc_no="I-000003", doc_date="2026-08-13"),
+        invoice_view(doc_key="2", doc_no="I-000002", doc_date="2026-08-07"),
+    ]
+
+    def handler(request):
+        return httpx.Response(200, json=listing_payload(*rows))
+
+    client, adapter = make_adapter(handler)
+    invoices = run(client, recent(adapter))
+
+    assert [i.doc_no for i in invoices] == ["I-000003", "I-000002", "I-000001"]
+
+
+def test_list_recent_invoices_breaks_same_day_ties_on_document_number():
+    rows = [
+        invoice_view(doc_key="1", doc_no="I-000001", doc_date="2026-08-13"),
+        invoice_view(doc_key="2", doc_no="I-000002", doc_date="2026-08-13"),
+    ]
+
+    def handler(request):
+        return httpx.Response(200, json=listing_payload(*rows))
+
+    client, adapter = make_adapter(handler)
+    invoices = run(client, recent(adapter))
+
+    assert [i.doc_no for i in invoices] == ["I-000002", "I-000001"]
+
+
+def test_list_recent_invoices_includes_cancelled_invoices_flagged():
+    rows = [
+        invoice_view(doc_key="1", doc_no="I-000001", cancelled=True),
+        invoice_view(doc_key="2", doc_no="I-000002", cancelled=False),
+    ]
+
+    def handler(request):
+        return httpx.Response(200, json=listing_payload(*rows))
+
+    client, adapter = make_adapter(handler)
+    invoices = run(client, recent(adapter))
+
+    assert {i.doc_no: i.is_cancelled for i in invoices} == {
+        "I-000001": True,
+        "I-000002": False,
+    }
+
+
+def test_list_recent_invoices_returns_empty_when_the_book_has_none():
+    def handler(request):
+        return httpx.Response(200, json=listing_payload())
+
+    client, adapter = make_adapter(handler)
+    assert run(client, recent(adapter)) == []
+
+
+def test_list_recent_invoices_pages_until_the_total_is_consumed():
+    pages = {
+        1: {"data": [invoice_view(doc_key="1", doc_no="I-000001")], "totalCount": 2},
+        2: {"data": [invoice_view(doc_key="2", doc_no="I-000002")], "totalCount": 2},
+    }
+
+    def handler(request):
+        page = json.loads(request.content)["page"]
+        return httpx.Response(200, json=pages[page])
+
+    client, adapter = make_adapter(handler)
+    invoices = run(client, recent(adapter))
+
+    assert sorted(i.doc_no for i in invoices) == ["I-000001", "I-000002"]
+
+
+def test_list_recent_invoices_rejects_an_inconsistent_total():
+    pages = {
+        1: {"data": [invoice_view(doc_key="1", doc_no="I-000001")], "totalCount": 2},
+        2: {"data": [invoice_view(doc_key="2", doc_no="I-000002")], "totalCount": 9},
+    }
+
+    def handler(request):
+        page = json.loads(request.content)["page"]
+        return httpx.Response(200, json=pages[page])
+
+    client, adapter = make_adapter(handler)
+    with pytest.raises(AutoCountDataError):
+        run(client, recent(adapter))
+
+
+def test_list_recent_invoices_rejects_a_blank_date_bound():
+    def handler(request):  # pragma: no cover - must never be called
+        raise AssertionError("no HTTP call should be made")
+
+    client, adapter = make_adapter(handler)
+    with pytest.raises(ValueError):
+        run(client, recent(adapter, date_from="  "))

@@ -180,6 +180,45 @@ class AutoCountMasterDataAdapter:
             extract=self._invoice_row,
         )
 
+    async def list_recent_invoices(
+        self,
+        company: CompanyConfig,
+        *,
+        date_from: str,
+        date_to: str,
+    ) -> list[InvoiceSummary]:
+        """Every invoice in the account book whose document date is in range.
+
+        Uses the documented invoice listing ``date`` (docDate) filter with no
+        debtor filter, so a caller browsing what was issued sees every
+        customer's invoices. ``search_invoices`` keeps its ``debtorCode`` +
+        ``createdDate`` filter untouched because price history and
+        ambiguous-write reconciliation depend on that exact behaviour.
+
+        Sorted newest first with the document number as a stable tie-break for
+        same-day invoices, so a caller can render the order it receives.
+        Cancelled invoices are included and flagged; presenting them is the
+        caller's decision.
+        """
+        date_from = self._validate_id(date_from, "date_from")
+        date_to = self._validate_id(date_to, "date_to")
+
+        def body_for(page: int) -> dict[str, Any]:
+            return {
+                "page": page,
+                "filter": {"date": {"from": date_from, "to": date_to}},
+            }
+
+        invoices = await self._listing(
+            company,
+            "POST",
+            "invoice/listing",
+            params_for=None,
+            body_for=body_for,
+            extract=self._invoice_row,
+        )
+        return sorted(invoices, key=lambda i: (i.doc_date, i.doc_no), reverse=True)
+
     async def get_invoice(
         self, company: CompanyConfig, invoice_no: str
     ) -> InvoiceSummary:
