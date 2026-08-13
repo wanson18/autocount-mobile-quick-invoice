@@ -6,8 +6,17 @@ back "no", the whole view-and-edit design is void and the feature has to
 become void-and-reissue instead, so this runs before any implementation.
 
     Q1  Does an invoice created with ``saveApprove: true`` accept ``PUT`` at all?
-    Q2  Does omitting ``master`` from the PUT body preserve the header?
+    Q2  Does echoing only the mandatory ``master`` fields preserve the header,
+        including the optional fields that are not sent?
     Q3  Does a shorter ``details`` array delete the trailing rows?
+
+Q2 asked a different question on the first attempt -- whether ``master``
+could be omitted entirely -- and the answer came back as a flat no: AutoCount
+replied ``400 The Master field is required.`` without ever reaching the
+invoice's approved state, leaving Q1 and Q3 unanswered. ``master`` is marked
+required on the Invoice Input Model, so the update now echoes the five
+mandatory master fields read back from the stored invoice and leaves every
+optional header field unsent.
 
 WHAT THIS DOES TO YOUR LIVE ACCOUNT BOOK
 ----------------------------------------
@@ -144,6 +153,43 @@ def summarise_header(payload: dict) -> dict[str, str]:
         "salesLocation",
     )
     return {k: str(master.get(k, "<absent>")) for k in keys}
+
+
+MASTER_REQUIRED_FIELDS = (
+    "docDate",
+    "debtorCode",
+    "debtorName",
+    "creditTerm",
+    "salesLocation",
+)
+
+
+def master_for_update(payload: dict) -> dict:
+    """The mandatory master fields, echoed back from the stored invoice.
+
+    ``master`` cannot be omitted from an Update Invoice body. The Invoice
+    Input Model marks it required, and a first probe confirmed it live: the
+    API answered ``400 The Master field is required.`` before it ever looked
+    at the invoice's approved state.
+
+    Only the five documented mandatory fields
+    (https://accounting-api.autocountcloud.com/documentation/models/invoice/inputmodels/invoice-master-inputmodel/)
+    are echoed, so every optional header field -- deliverAddress, description,
+    remarks -- is left unspecified. Whether those survive is exactly what Q2
+    now measures: the header is preserved by echoing what must be sent and
+    omitting the rest, not by omitting the whole object.
+    """
+    master = payload.get("master") or {}
+    out = {}
+    for field in MASTER_REQUIRED_FIELDS:
+        value = master.get(field)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise SpikeAborted(
+                f"the stored invoice's master is missing {field!r}, so it cannot "
+                "be echoed back on an update"
+            )
+        out[field] = value
+    return out
 
 
 def detail_row(product_code: str, description: str, qty: Decimal, price: Decimal) -> dict:
@@ -304,13 +350,16 @@ async def run_spike(
 
         # ---- Q1: does an approved invoice accept PUT at all? -------------
         print()
-        log("Q1", "PUT with the identical 3-row details array (no master key) ...")
+        log("Q1", "PUT with the identical 3-row details array, master echoed back ...")
         guard(created_doc_no)
+        echoed_master = master_for_update(original)
+        log("Q1", f"master echoed: {echoed_master}")
         unchanged = {
+            "master": echoed_master,
             "details": [
                 detail_row(code, name, Decimal("1"), price)
                 for code, name, price in items
-            ]
+            ],
         }
         try:
             put_response = await client.write(
@@ -326,7 +375,11 @@ async def run_spike(
         findings["Q1"] = f"YES -- approved invoice accepted PUT (status {put_response.status_code})"
         log("Q1", findings["Q1"])
 
-        # ---- Q2: is the header preserved when master is omitted? ---------
+        # ---- Q2: does the header survive an echoed-mandatory-fields master? --
+        # The interesting half is the OPTIONAL header fields, which are not
+        # sent at all: deliverAddress and description were set on create and
+        # are absent from the update body, so if they come back intact then a
+        # line edit genuinely leaves the header alone.
         after_q1 = await get_invoice(client, company, created_doc_no)
         header_after = summarise_header(after_q1)
         drifted = {
@@ -334,10 +387,17 @@ async def run_spike(
             for k in original_header
             if original_header[k] != header_after[k]
         }
+        omitted = [k for k in original_header if k not in echoed_master and k != "docNo"]
         if drifted:
-            findings["Q2"] = f"NO -- header fields changed when master was omitted: {drifted}"
+            findings["Q2"] = (
+                f"NO -- header fields changed after an update carrying only the "
+                f"mandatory master fields: {drifted}"
+            )
         else:
-            findings["Q2"] = "YES -- every header field survived a PUT with no master key"
+            findings["Q2"] = (
+                "YES -- the whole header survived; the unsent optional fields "
+                f"({', '.join(omitted)}) were preserved, not blanked"
+            )
         log("Q2", findings["Q2"])
 
         lines_after_q1 = summarise_lines(after_q1)
@@ -348,10 +408,11 @@ async def run_spike(
         log("Q3", "PUT with only 2 rows (row 1 and row 3) ...")
         guard(created_doc_no)
         shortened = {
+            "master": master_for_update(after_q1),
             "details": [
                 detail_row(items[0][0], items[0][1], Decimal("1"), items[0][2]),
                 detail_row(items[2][0], items[2][1], Decimal("1"), items[2][2]),
-            ]
+            ],
         }
         await client.write(
             company, "PUT", "invoice", params={"docNo": created_doc_no}, json=shortened

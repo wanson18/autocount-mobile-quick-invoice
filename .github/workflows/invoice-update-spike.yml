@@ -127,6 +127,14 @@ jobs:
             exit 1
           fi
 
+          # The workflow runs from the default branch, so the script has to be
+          # on the default branch too. It once was not, and the run went green
+          # having probed nothing.
+          if [ ! -f scripts/spike_invoice_update.py ]; then
+            echo "::error::scripts/spike_invoice_update.py is missing from this branch. The workflow runs from the default branch, so the script must be merged to it as well."
+            exit 1
+          fi
+
           if [ -n "$IN_CLEANUP_ONLY" ]; then
             python scripts/spike_invoice_update.py \
               --company "$IN_COMPANY" \
@@ -144,7 +152,19 @@ jobs:
           # before the summary is published.
           set +e
           python scripts/spike_invoice_update.py "${ARGS[@]}" 2>&1 | tee spike-output.txt
-          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "exit_code=$RC" >> "$GITHUB_OUTPUT"
+
+          # 0 means Q1 answered yes, 1 means Q1 answered no. Both are real
+          # findings and the job is green for either. Every other code means
+          # the probe never produced an answer at all -- a missing script, a
+          # config error, a crash -- and must fail loudly. A green check that
+          # actually meant "never ran" is worse than a red one.
+          if [ "$RC" -ne 0 ] && [ "$RC" -ne 1 ]; then
+            echo "::error::The spike produced no findings (exit $RC). It did not answer the three questions -- see the log above."
+            exit "$RC"
+          fi
 
       - name: Publish the findings
         if: always()
