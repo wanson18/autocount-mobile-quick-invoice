@@ -1,8 +1,17 @@
 # Design: View and edit issued invoices
 
 **Date:** 2026-08-13
-**Status:** Approved, pending implementation
+**Status:** Approved; live spike passed, one correction applied
 **Branch:** `claude/view-edit-invoices-crkk25`
+
+> **Spike outcome (2026-08-13).** All three open questions were answered
+> against the live Sdn Bhd account book — see
+> [`docs/autocount/invoice-update-spike.md`](../autocount/invoice-update-spike.md).
+> An approved invoice **does** accept `PUT` (204), and a shorter `details`
+> array **does** delete the trailing rows, so full-state replace stands. One
+> correction: the header is **not** preserved by omitting `master`. `master`
+> is required and must carry the five mandatory fields echoed from the
+> invoice being edited. The relevant sections below have been updated.
 
 ## Problem
 
@@ -137,11 +146,18 @@ Responsibilities:
 
 ### Payload builder — `app/autocount/mapping.py`
 
-`map_invoice_update_payload(lines, products) -> dict` alongside the existing
-`map_invoice_payload`. It emits **only** `{"details": [...]}`:
+`map_invoice_update_payload(lines, products, master) -> dict` alongside the
+existing `map_invoice_payload`. It emits `{"master": {...}, "details": [...]}`:
 
-- No `master` key at all, so the header — `docDate`, `debtorCode`,
-  `deliverAddress`, `creditTerm`, `salesLocation` — is preserved by omission.
+- `master` carries exactly the five documented mandatory fields — `docDate`,
+  `debtorCode`, `debtorName`, `creditTerm`, `salesLocation` — echoed verbatim
+  from the invoice being edited. It **cannot** be omitted: the Invoice Input
+  Model marks it required and the live API rejects a body without it
+  (`400 The Master field is required.`). `docDate` comes back as a datetime
+  (`2026-08-13T00:00:00`) and is echoed unchanged, never reformatted.
+- Every **optional** header field — `deliverAddress`, `description`, remarks —
+  is left unsent, and is preserved rather than blanked (confirmed live). That
+  is how the header survives a line edit.
 - Each row carries `productCode`, `description`, `qty`, `unitPrice`, and
   `accNo` (`DEFAULT_ACC_NO`), matching what the create path sends per line.
   `description` is the resolved product's `name` from `get_item`, exactly as
@@ -307,27 +323,27 @@ against the real account book after the unit suite is green: issue a
 throwaway invoice, view it in the list, edit its lines, and confirm the result
 in AutoCount's own UI.
 
-## Open questions — resolve by live spike before building
+## Open questions — resolved by live spike, 2026-08-13
 
 The repo has been burned three times by AutoCount's live behaviour differing
 from its documentation (`creditTerm` needing a trailing period, `accNo` being
 per-line, the create response being a bare `201` with only a `location`
-header). Three assumptions in this design are undocumented and must be
-confirmed against one throwaway invoice **before** any UI work:
+header). Three assumptions here were undocumented and were confirmed against
+one throwaway invoice in the live Sdn Bhd book before any edit-path work.
+Full write-up:
+[`docs/autocount/invoice-update-spike.md`](../autocount/invoice-update-spike.md).
 
-1. **Does an approved invoice accept `PUT` at all?** Invoices are issued with
-   `saveApprove: true`, and approved documents are commonly locked from edit.
-2. **Does omitting `master` preserve the header?** The docs say omitted fields
-   keep their values, but the create path has already shown that "required"
-   and "optional" do not always mean what the docs say.
-3. **Does a shorter `details` array actually delete the trailing rows?**
-
-If (1) is false, this design is void: the feature becomes void-and-reissue
-(the rejected approach C) and needs a fresh design. Learning that on day one
-is the point of sequencing the spike first.
-
-Findings get written to `docs/autocount/invoice-update-spike.md`, matching the
-precedent set by `docs/autocount/pdf-spike.md`.
+1. **Does an approved invoice accept `PUT` at all?** **Yes** — `204` against
+   an invoice created with `saveApprove: true`. `DELETE` succeeded on one too.
+   This was the question that could have voided the design; it did not.
+2. **Does omitting `master` preserve the header?** **No — `master` cannot be
+   omitted.** The API answers `400 The Master field is required.` The design
+   was corrected: echo the five mandatory master fields from the invoice being
+   edited and leave the optional ones unsent, which does preserve them
+   (`deliverAddress` survived untouched).
+3. **Does a shorter `details` array delete the trailing rows?** **Yes** — a
+   3-line invoice updated with `[row1, row3]` became exactly those two rows,
+   in order. Full-state replace is correct.
 
 ## Implementation order
 

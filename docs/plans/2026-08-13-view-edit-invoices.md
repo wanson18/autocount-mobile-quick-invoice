@@ -1010,9 +1010,17 @@ becomes a domain error so an unknown docNo is a clean 404 rather than a 502."
 
 **Interfaces:**
 - Consumes: `DEFAULT_ACC_NO`, `ProductSummary`.
-- Produces: `map_invoice_update_payload(lines: Sequence[InvoiceEditLine], products: Mapping[str, ProductSummary]) -> dict[str, Any]`
+- Produces: `map_invoice_update_payload(lines: Sequence[InvoiceEditLine], products: Mapping[str, ProductSummary], master: Mapping[str, Any]) -> dict[str, Any]`
 
-> If Task 1 reported **Q3 = NO**, stop and report before starting this task — line removal needs a different mechanism and this builder's contract changes.
+> **Updated by the spike (2026-08-13).** Q1 and Q3 came back YES, so
+> full-state replace stands. Q2 came back NO in a way that changes this task:
+> `master` **cannot** be omitted — the API answers
+> `400 The Master field is required.` The builder now takes the invoice's
+> current master and echoes the five mandatory fields (`docDate`,
+> `debtorCode`, `debtorName`, `creditTerm`, `salesLocation`) verbatim,
+> leaving optional header fields unsent (confirmed live: they are preserved,
+> not blanked). `docDate` arrives as a datetime — echo it unchanged.
+> See [`docs/autocount/invoice-update-spike.md`](../autocount/invoice-update-spike.md).
 
 - [ ] **Step 1: Write the failing test**
 
