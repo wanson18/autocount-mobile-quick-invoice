@@ -99,6 +99,14 @@
   }
   .readonly-note { color: var(--muted); font-size: 13.5px; padding: 14px 4px; }
 
+  .diff-row {
+    font-size: 14px; padding: 10px 12px; margin-bottom: 8px; border-radius: 10px;
+    border-left: 3px solid transparent; background: rgba(255,255,255,.04);
+  }
+  .diff-row.added { border-left-color: #12b76a; }
+  .diff-row.changed { border-left-color: #f79009; }
+  .diff-row.removed { border-left-color: #f04438; }
+
   .selected-customer-card {
     margin-top: 10px;
     background: var(--panel);
@@ -246,6 +254,29 @@
         <span id="invoice-detail-total">RM 0.00</span>
       </div>
       <div id="invoice-detail-actions"></div>
+    </section>
+
+    <!-- View: edit an issued invoice's lines -->
+    <section class="screen" data-screen="invoiceEdit">
+      <div class="selected-summary" id="edit-context"></div>
+      <div class="field-label">Lines</div>
+      <div id="edit-line-list"></div>
+      <button class="add-item-btn" id="edit-add-item-btn">+ Add item</button>
+      <div id="edit-item-picker" style="display:none; margin-top:14px;">
+        <input type="search" id="edit-item-search" placeholder="Search item code or name..." autocomplete="off" />
+        <div class="list" id="edit-item-search-list"></div>
+      </div>
+    </section>
+
+    <!-- View: confirm the change before saving -->
+    <section class="screen" data-screen="invoiceEditConfirm">
+      <div class="selected-summary" id="edit-confirm-context"></div>
+      <div class="field-label">Changes</div>
+      <div id="edit-diff"></div>
+      <div class="review-total">
+        <span>New total</span>
+        <span id="edit-new-total">RM 0.00</span>
+      </div>
     </section>
 
     <!-- Screen 2: Customer + address -->

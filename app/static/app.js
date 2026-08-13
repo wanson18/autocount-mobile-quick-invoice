@@ -12,12 +12,21 @@
   // it: these screens have no linear order and must not disturb the "Step N
   // of 4" numbering. state.view names the active branch screen, or null when
   // the wizard is in charge.
-  const VIEW_SCREENS = ["mode", "invoiceList", "invoiceDetail"];
+  const VIEW_SCREENS = [
+    "mode", "invoiceList", "invoiceDetail", "invoiceEdit", "invoiceEditConfirm",
+  ];
   const VIEW_TITLES = {
     mode: "Quick Invoice", invoiceList: "Recent Invoices", invoiceDetail: "Invoice",
+    invoiceEdit: "Edit Lines", invoiceEditConfirm: "Confirm Changes",
   };
   // Where Back goes from each branch screen; null returns to the wizard.
-  const VIEW_BACK = { mode: null, invoiceList: "mode", invoiceDetail: "invoiceList" };
+  const VIEW_BACK = {
+    mode: null,
+    invoiceList: "mode",
+    invoiceDetail: "invoiceList",
+    invoiceEdit: "invoiceDetail",
+    invoiceEditConfirm: "invoiceEdit",
+  };
   const ALL_SCREENS = STEPS.concat(VIEW_SCREENS);
 
   const state = {
@@ -34,6 +43,10 @@
     invoices: [],           // recent invoice list rows
     viewInvoice: null,      // the invoice open on the detail screen
     loadingInvoices: false,
+    editDocNo: null,        // the invoice being edited
+    editOriginal: [],       // its line set as loaded, sent as expected_lines
+    editLines: [],          // the desired line set being built
+    saving: false,
   };
 
   function todayISO() {
@@ -63,6 +76,17 @@
   async function apiPost(path, payload) {
     const res = await fetch(API_BASE + path, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = await safeJson(res);
+    if (!res.ok) throw apiError(body, res.status);
+    return body.data;
+  }
+
+  async function apiPut(path, payload) {
+    const res = await fetch(API_BASE + path, {
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
@@ -150,18 +174,54 @@
     if (current === "result") renderResultScreen();
   }
 
-  // Branch screens navigate by tapping a card or a row, so the wizard's Next
-  // button has nothing to do and is hidden rather than left dead on screen.
+  // Most branch screens navigate by tapping a card or a row, so the wizard's
+  // Next button has nothing to do and is hidden rather than left dead on
+  // screen. The two edit screens are the exception: they advance.
   function renderViewScreen(current) {
     headerTitle.textContent = VIEW_TITLES[current];
     stepPill.style.display = "none";
     backBtn.style.display = "block";
-    nextBtn.style.display = "none";
     actionbar.style.display = "flex";
+
+    const advances = current === "invoiceEdit" || current === "invoiceEditConfirm";
+    nextBtn.style.display = advances ? "block" : "none";
+    if (advances) {
+      nextBtn.textContent = current === "invoiceEdit" ? "Review changes" : "Save changes";
+      nextBtn.disabled = !canSaveEdit(current);
+    }
 
     if (current === "mode") renderModeScreen();
     if (current === "invoiceList") renderInvoiceList();
     if (current === "invoiceDetail") renderInvoiceDetail();
+    if (current === "invoiceEdit") renderEditScreen();
+    if (current === "invoiceEditConfirm") renderEditConfirmScreen();
+  }
+
+  function canSaveEdit(screen) {
+    if (state.saving) return false;
+    if (!state.editLines.length) return false;
+    const valid = state.editLines.every((l) => {
+      const q = parseFloat(l.quantity);
+      const p = parseFloat(l.unit_price);
+      return q > 0 && p >= 0 && !Number.isNaN(q) && !Number.isNaN(p);
+    });
+    if (!valid) return false;
+    // Nothing to save if the line set is untouched — the server would reject
+    // it as a no-op edit anyway, and it wastes a live write.
+    if (screen === "invoiceEditConfirm") return editHasChanges();
+    return true;
+  }
+
+  function editHasChanges() {
+    if (state.editLines.length !== state.editOriginal.length) return true;
+    return state.editLines.some((line, i) => {
+      const prior = state.editOriginal[i];
+      return (
+        prior.item_id !== line.item_id ||
+        parseFloat(prior.quantity) !== parseFloat(line.quantity) ||
+        parseFloat(prior.unit_price) !== parseFloat(line.unit_price)
+      );
+    });
   }
 
   function canAdvance(screen) {
@@ -332,12 +392,228 @@
     // is_editable is the server's answer, so the reason is spelled out rather
     // than the button just being missing.
     document.getElementById("invoice-detail-actions").innerHTML = inv.is_editable
-      ? '<div class="readonly-note">Editing lines is coming next.</div>'
+      ? '<button type="button" class="add-item-btn" id="edit-invoice-btn">Edit lines</button>'
       : '<div class="readonly-note">' +
         (inv.is_cancelled
           ? "This invoice is cancelled and cannot be changed."
           : "This invoice is more than 30 days old. Correct it in AutoCount directly.") +
         "</div>";
+
+    const editBtn = document.getElementById("edit-invoice-btn");
+    if (editBtn) editBtn.onclick = startEdit;
+  }
+
+  // ---------- Branch: edit an issued invoice's lines ----------
+
+  function startEdit() {
+    const inv = state.viewInvoice;
+    if (!inv || !inv.is_editable) return;
+    state.editDocNo = inv.doc_no;
+    // The line set exactly as loaded. Sent back as expected_lines so the
+    // server can refuse a save built on a view that has since gone stale.
+    state.editOriginal = inv.lines.map((line) => ({
+      item_id: line.product_code,
+      quantity: line.quantity,
+      unit_price: line.unit_price,
+    }));
+    state.editLines = inv.lines.map((line) => ({
+      item_id: line.product_code,
+      description: line.description,
+      quantity: line.quantity,
+      unit_price: line.unit_price,
+    }));
+    state.view = "invoiceEdit";
+    showBanner(null);
+    editItemPicker.style.display = "none";
+    render();
+  }
+
+  const editLineListEl = document.getElementById("edit-line-list");
+  const editAddItemBtn = document.getElementById("edit-add-item-btn");
+  const editItemPicker = document.getElementById("edit-item-picker");
+  const editItemSearchInput = document.getElementById("edit-item-search");
+  const editItemSearchList = document.getElementById("edit-item-search-list");
+
+  function renderEditScreen() {
+    document.getElementById("edit-context").innerHTML =
+      "<b>" + escapeHtml(state.editDocNo) + "</b><br />" +
+      "Changing lines only. The invoice date and customer stay as they are.";
+
+    editLineListEl.innerHTML = "";
+    state.editLines.forEach((line, index) => {
+      const card = document.createElement("div");
+      card.className = "line-card";
+      card.innerHTML =
+        '<div class="line-head">' +
+          '<div><div class="line-title">' + escapeHtml(line.item_id) + "</div>" +
+          '<div class="line-sub">' + escapeHtml(line.description || "") + "</div></div>" +
+          // An invoice must keep at least one line; the server rejects an
+          // empty set, so the last Remove is disabled rather than failing.
+          '<button class="remove-btn" data-idx="' + index + '"' +
+            (state.editLines.length === 1 ? " disabled" : "") + ">Remove</button>" +
+        "</div>" +
+        '<div class="qty-price-row">' +
+          '<div><label>Quantity</label><input type="number" inputmode="decimal" min="0" step="any" class="qty-input" data-idx="' + index + '" value="' + escapeHtml(line.quantity) + '" /></div>' +
+          '<div><label>Unit Price (RM)</label><input type="number" inputmode="decimal" min="0" step="any" class="price-input" data-idx="' + index + '" value="' + escapeHtml(line.unit_price) + '" /></div>' +
+        "</div>" +
+        '<div class="line-total">RM ' + money(decMul(line.quantity, line.unit_price)) + "</div>";
+      editLineListEl.appendChild(card);
+    });
+
+    editLineListEl.querySelectorAll(".remove-btn").forEach((btn) => {
+      btn.onclick = () => {
+        state.editLines.splice(parseInt(btn.dataset.idx, 10), 1);
+        render();
+      };
+    });
+    editLineListEl.querySelectorAll(".qty-input").forEach((input) => {
+      input.oninput = () => {
+        state.editLines[parseInt(input.dataset.idx, 10)].quantity = input.value;
+        nextBtn.disabled = !canSaveEdit("invoiceEdit");
+        updateLineTotal(input);
+      };
+    });
+    editLineListEl.querySelectorAll(".price-input").forEach((input) => {
+      input.oninput = () => {
+        state.editLines[parseInt(input.dataset.idx, 10)].unit_price = input.value;
+        nextBtn.disabled = !canSaveEdit("invoiceEdit");
+        updateLineTotal(input);
+      };
+    });
+  }
+
+  editAddItemBtn.addEventListener("click", () => {
+    editItemPicker.style.display =
+      editItemPicker.style.display === "none" ? "block" : "none";
+    editItemSearchInput.value = "";
+    editItemSearchList.innerHTML = "";
+    if (editItemPicker.style.display === "block") editItemSearchInput.focus();
+  });
+
+  const doEditItemSearch = debounce(async function (q) {
+    if (!state.company) return;
+    editItemSearchList.innerHTML = '<div class="empty-hint">Searching...</div>';
+    try {
+      const results = await apiGet(
+        "/" + state.company.key + "/products?q=" + encodeURIComponent(q)
+      );
+      editItemSearchList.innerHTML = "";
+      if (!results.length) {
+        editItemSearchList.innerHTML = '<div class="empty-hint">No items found</div>';
+        return;
+      }
+      results.forEach((p) => {
+        const item = document.createElement("div");
+        item.className = "list-item";
+        item.innerHTML =
+          '<div class="primary">' + escapeHtml(p.name) + "</div>" +
+          '<div class="secondary">' + escapeHtml(p.code) + " &middot; RM " +
+          money(p.default_price) + "</div>";
+        item.onclick = () => {
+          // Appended, not inserted: a new row lands at the end of the array,
+          // which is exactly where AutoCount will add it.
+          state.editLines.push({
+            item_id: p.id,
+            description: p.name,
+            quantity: "1",
+            unit_price: p.default_price,
+          });
+          editItemPicker.style.display = "none";
+          render();
+        };
+        editItemSearchList.appendChild(item);
+      });
+    } catch (e) {
+      editItemSearchList.innerHTML = "";
+      showBanner("Item search failed: " + e.message);
+    }
+  }, 300);
+
+  editItemSearchInput.addEventListener("input", (e) => doEditItemSearch(e.target.value));
+
+  // ---------- Branch: confirm the change ----------
+
+  function renderEditConfirmScreen() {
+    document.getElementById("edit-confirm-context").innerHTML =
+      "<b>" + escapeHtml(state.editDocNo) + "</b>";
+
+    const before = state.editOriginal;
+    const after = state.editLines;
+    const rows = [];
+
+    after.forEach((line, index) => {
+      const prior = before[index];
+      if (!prior || prior.item_id !== line.item_id) {
+        rows.push(diffRow("added", "+ " + line.item_id + "  " +
+          line.quantity + " × RM " + money(line.unit_price)));
+      } else if (
+        parseFloat(prior.quantity) !== parseFloat(line.quantity) ||
+        parseFloat(prior.unit_price) !== parseFloat(line.unit_price)
+      ) {
+        rows.push(diffRow("changed", "~ " + line.item_id + "  " +
+          prior.quantity + " × RM " + money(prior.unit_price) + "  →  " +
+          line.quantity + " × RM " + money(line.unit_price)));
+      }
+    });
+    before.slice(after.length).forEach((line) => {
+      rows.push(diffRow("removed", "− " + line.item_id + " removed"));
+    });
+
+    document.getElementById("edit-diff").innerHTML =
+      rows.length ? rows.join("") : '<div class="readonly-note">No changes.</div>';
+
+    const total = after.reduce(
+      (sum, line) => sum + decMul(line.quantity, line.unit_price), 0
+    );
+    document.getElementById("edit-new-total").textContent = "RM " + money(total);
+  }
+
+  function diffRow(kind, text) {
+    return '<div class="diff-row ' + kind + '">' + escapeHtml(text) + "</div>";
+  }
+
+  async function saveEdit() {
+    if (state.saving) return;
+    state.saving = true;
+    nextBtn.disabled = true;
+    nextBtn.innerHTML = '<span class="spinner"></span> Saving...';
+    try {
+      const data = await apiPut(
+        "/" + state.company.key + "/invoices/" + encodeURIComponent(state.editDocNo),
+        {
+          company: state.company.key,
+          expected_lines: state.editOriginal.map((line) => ({
+            item_id: line.item_id,
+            quantity: String(line.quantity),
+            unit_price: String(line.unit_price),
+          })),
+          lines: state.editLines.map((line) => ({
+            item_id: line.item_id,
+            quantity: String(line.quantity),
+            unit_price: String(line.unit_price),
+          })),
+        }
+      );
+      state.viewInvoice = data;
+      state.view = "invoiceDetail";
+      render();
+      showBanner("Invoice " + data.doc_no + " updated", "success");
+    } catch (e) {
+      // invoice_changed and edit_unconfirmed both mean the on-screen line set
+      // can no longer be trusted, so reload rather than leave the user staring
+      // at a form the server has already rejected.
+      const code = e.body && e.body.error;
+      if (code === "invoice_changed" || code === "edit_unconfirmed") {
+        showBanner(e.message, "error");
+        await openInvoice(state.editDocNo);
+      } else {
+        showBanner(e.message || "Could not save the changes", "error");
+      }
+    } finally {
+      state.saving = false;
+      nextBtn.innerHTML = "Save changes";
+      nextBtn.disabled = !canSaveEdit("invoiceEditConfirm");
+    }
   }
 
   // ---------- Screen 2: Customer + address ----------
@@ -635,6 +911,19 @@
   });
 
   nextBtn.addEventListener("click", async () => {
+    if (state.view === "invoiceEdit") {
+      showBanner(null);
+      editItemPicker.style.display = "none";
+      state.view = "invoiceEditConfirm";
+      render();
+      return;
+    }
+    if (state.view === "invoiceEditConfirm") {
+      showBanner(null);
+      await saveEdit();
+      return;
+    }
+
     const current = STEPS[state.stepIndex];
     showBanner(null);
     if (current === "company") {
