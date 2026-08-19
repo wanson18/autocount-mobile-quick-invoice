@@ -36,8 +36,10 @@ handled manually by the user.
   page instead offers **Open Cloud Report**, a hidden server-side redirect
   (`GET /api/{company}/invoices/{doc_no}/cloud-report`, excluded from the
   Custom GPT schema) that opens the verified AutoCount Cloud report screen
-  where Print / Export PDF / Share happen. Its live fresh-tab stability and
-  visual report/Print behavior are pending Task 4 verification.
+  where Print / Export PDF / Share happen. The same handoff is available from
+  both the post-issue result screen and the Recent Invoice detail screen. Its
+  live fresh-tab stability and visual report/Print behavior are pending Task 4
+  verification.
 
 ## Architecture
 
