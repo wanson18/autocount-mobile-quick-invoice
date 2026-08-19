@@ -17,9 +17,16 @@ This plan does not implement a custom PDF or an undocumented report API. If the 
 - Keep saveApprove: true and submitEInvoice: false on the existing issue path.
 - Use the AutoCount Cloud report as the output authority; do not generate a replacement invoice PDF.
 - Do not scrape production HTML or automate Cloud UI clicks when no supported mechanism exists.
-- Do not expose account-book IDs, API keys, credentials, or taxpayer data in browser assets or public responses.
+- Do not expose account-book IDs, API keys, credentials, or taxpayer data in
+  browser assets or public app JSON. The Cloud redirect may resolve to
+  AutoCount's own URL containing its required server-configured account-book
+  path; that value must remain out of the app's JavaScript, OpenAPI schema, and
+  client-generated URLs.
 - Printing, exporting, or sharing is read-only after issue and must never create, edit, void, approve, post, or submit an invoice.
-- Use the server-confirmed invoice_number/document number from the issue read-back.
+- Use the server-confirmed invoice_number/document number to look up the
+  invoice, then use the server-confirmed invoice_id/document key (`docKey`) to
+  build the Cloud report URL. The Cloud report URL supplied for this project
+  uses `docKey`, not the invoice number.
 - Run python -m pytest tests/ before each implementation commit and perform manual Cloud verification before claiming completion.
 
 ---
@@ -108,9 +115,12 @@ Expected: one documentation-only commit containing the observed Cloud-report dec
 
 ---
 
-### Task 2: Implement the verified Cloud invoice deep-link handoff
+### Task 2: Implement the Cloud invoice deep-link handoff
 
-**Condition:** Execute only when Task 1 records a stable, safe deep link.
+**Condition:** Execute only when Task 1 records a safe Cloud report route. The
+route's live stability and visual report/Print behavior remain explicit Task 4
+conditions because the current browser runtime cannot perform the authenticated
+fresh-tab check.
 
 **Files:**
 - Modify: app/config.py
@@ -123,30 +133,31 @@ Expected: one documentation-only commit containing the observed Cloud-report dec
 - Modify: README.md lines 32-36 and 148-154
 
 **Interfaces:**
-- Consumes: CompanyKey, a server-side non-secret Cloud URL template verified in Task 1, and the issued document number.
+- Consumes: CompanyKey, a server-side Cloud URL template verified in Task 1,
+  and the issued document number used for the server-side read-back.
 - Produces: GET /api/{company}/invoices/{doc_no}/cloud-report, hidden from the Custom GPT schema, returning an HTTP redirect to the verified Cloud report URL.
-- Exact helper: build_cloud_report_url(template: str, doc_no: str) -> str.
+- Exact helper: build_cloud_report_url(template: str, doc_key: str) -> str.
 
 - [ ] **Step 1: Write URL-builder tests before implementation**
 
 Add tests covering the URL contract:
 
 ~~~python
-def test_cloud_report_url_substitutes_document_number_without_exposing_account_book():
+def test_cloud_report_url_substitutes_doc_key_without_exposing_account_book():
     url = build_cloud_report_url(
-        "https://cloud.test.invalid/invoice?docNo={doc_no}",
-        doc_no="INV-2026-0001",
+        "https://cloud.test.invalid/invoice?docKey={doc_key}",
+        doc_key="9001",
     )
-    assert url == "https://cloud.test.invalid/invoice?docNo=INV-2026-0001"
+    assert url == "https://cloud.test.invalid/invoice?docKey=9001"
     assert "account" not in url.lower()
     assert "api" not in url.lower()
 
 
-def test_cloud_report_url_rejects_blank_document_number():
-    with pytest.raises(ValueError, match="doc_no"):
+def test_cloud_report_url_rejects_blank_doc_key():
+    with pytest.raises(ValueError, match="doc_key"):
         build_cloud_report_url(
-            "https://cloud.test.invalid/invoice?docNo={doc_no}",
-            doc_no=" ",
+            "https://cloud.test.invalid/invoice?docKey={doc_key}",
+            doc_key=" ",
         )
 ~~~
 
@@ -164,15 +175,31 @@ Expected: FAIL because the URL builder does not yet exist.
 
 - [ ] **Step 3: Implement the server-side URL builder and redirect**
 
-Add ENV_CLOUD_INVOICE_URL_TEMPLATE and a server-side getter in app/config.py, then add build_cloud_report_url(template: str, doc_no: str) -> str in app/services/cloud_report_link.py. It must:
+Add ENV_CLOUD_INVOICE_URL_TEMPLATE and a server-side getter in app/config.py,
+then add build_cloud_report_url(template: str, doc_key: str) -> str in
+app/services/cloud_report_link.py. The production template must match the
+Cloud route supplied by the user, with the account-book path kept in the
+server environment, for example:
 
-1. reject a blank document number;
-2. substitute only the URL-encoded {doc_no} value;
+~~~text
+https://accounting-report.autocountcloud.com/rpt/<server-account-book-key>/invoice?reportName=WANSON+SDN+BHD+E-INVOICE+&docKey={doc_key}
+~~~
+
+It must:
+
+1. reject a blank document key;
+2. substitute only the URL-encoded {doc_key} value;
 3. reject templates containing {account_book_id}, API-key text, or credential placeholders;
 4. require an HTTPS URL; and
 5. return no AutoCount response data or credentials.
 
-Add the hidden route GET /api/{company}/invoices/{doc_no}/cloud-report in app/api/invoices.py. Resolve the company server-side, call read_invoice(master, company, doc_no) to prove the document exists in the selected account book, then return RedirectResponse to the verified template. A missing invoice must use the existing invoice_not_found response rather than redirecting.
+Add the hidden route GET /api/{company}/invoices/{doc_no}/cloud-report in
+app/api/invoices.py. Resolve the company server-side, call
+read_invoice(master, company, doc_no) to prove the document exists in the
+selected account book, then pass `invoice.id` (the server-confirmed AutoCount
+`docKey`) to the URL builder and return RedirectResponse to the verified
+template. A missing invoice must use the existing invoice_not_found response
+rather than redirecting.
 
 - [ ] **Step 4: Run focused API tests**
 
@@ -182,7 +209,7 @@ Add these cases to tests/unit/test_api.py using the existing fake master:
 def test_cloud_report_redirect_uses_verified_invoice_and_hides_account_book(api, monkeypatch):
     monkeypatch.setenv(
         "AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE",
-        "https://cloud.test.invalid/invoice?docNo={doc_no}",
+        "https://cloud.test.invalid/invoice?docKey={doc_key}",
     )
     client, _, _ = api
     response = client.get(
@@ -191,7 +218,7 @@ def test_cloud_report_redirect_uses_verified_invoice_and_hides_account_book(api,
     )
     assert response.status_code == 307
     assert response.headers["location"] == (
-        "https://cloud.test.invalid/invoice?docNo=INV-2026-0001"
+        "https://cloud.test.invalid/invoice?docKey=inv-1"
     )
     assert SDN_BHD_AB not in response.text
 
