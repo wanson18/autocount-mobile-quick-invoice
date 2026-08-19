@@ -159,8 +159,8 @@ company → customer/address → items (qty, price prefilled from price history)
 → review → issue. It calls the same REST API as the Custom GPT Action. There
 is no PDF/share step inside the app. After issuing, the result screen offers
 **Open Cloud Report** (a new-tab deep link to the verified AutoCount Cloud
-report screen, opened with `noopener,noreferrer`) and **Copy invoice number**;
-Print, Export PDF, and Share are all performed in that Cloud report screen. The
+report screen, opened with `noopener,noreferrer`). Print, Export PDF, and Share
+are all performed in that Cloud report screen. The
 deep link route is hidden from the Custom GPT schema and substitutes the
 server-confirmed AutoCount `docKey` into a server-side URL template — the
 account-book path and any credentials live only in the server environment.

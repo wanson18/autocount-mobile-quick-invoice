@@ -487,7 +487,6 @@
     html +=
       '<div class="result-actions detail-cloud-actions">' +
       '<button type="button" class="btn btn-primary" id="detail-open-cloud-report-btn">Open Cloud Report</button>' +
-      '<button type="button" class="btn btn-secondary" id="detail-copy-invoice-number-btn">Copy invoice number</button>' +
       '</div>' +
       '<div class="status-note">Print, Export PDF, and Share are done in the AutoCount Cloud report screen that opens.</div>';
     actionsEl.innerHTML = html;
@@ -499,16 +498,6 @@
       const url = "/api/" + encodeURIComponent(state.company.key) +
         "/invoices/" + encodeURIComponent(inv.doc_no) + "/cloud-report";
       window.open(url, "_blank", "noopener,noreferrer");
-    };
-
-    document.getElementById("detail-copy-invoice-number-btn").onclick = async () => {
-      const number = inv.doc_no;
-      try {
-        await navigator.clipboard.writeText(number);
-        showBanner("Invoice number copied: " + number, "success");
-      } catch {
-        showBanner("Copy this invoice number manually: " + number, "info");
-      }
     };
   }
 
@@ -937,7 +926,6 @@
         escapeHtml(state.company.name) + '.</div>' +
         '<div class="result-actions">' +
         '<button class="btn btn-primary" id="open-cloud-report-btn">Open Cloud Report</button>' +
-        '<button class="btn btn-secondary" id="copy-invoice-number-btn">Copy invoice number</button>' +
         '</div>' +
         '<div class="status-note">Print, Export PDF, and Share are done in the AutoCount Cloud report screen that opens.</div>';
 
@@ -946,17 +934,6 @@
         const url = "/api/" + encodeURIComponent(state.company.key) +
           "/invoices/" + encodeURIComponent(r.invoice_number) + "/cloud-report";
         window.open(url, "_blank", "noopener,noreferrer");
-      });
-
-      const copyBtn = document.getElementById("copy-invoice-number-btn");
-      copyBtn.addEventListener("click", async () => {
-        const number = r.invoice_number;
-        try {
-          await navigator.clipboard.writeText(number);
-          showBanner("Invoice number copied: " + number, "success");
-        } catch {
-          showBanner("Copy this invoice number manually: " + number, "info");
-        }
       });
     } else if (state.issueResult && !state.issueResult.ok) {
       resultCard.innerHTML =

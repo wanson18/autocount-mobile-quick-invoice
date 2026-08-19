@@ -9,8 +9,9 @@ result screen's Cloud handoff but lives on the Recent Invoice detail screen:
   route ``/api/{company}/invoices/{doc_no}/cloud-report`` in a new tab with
   ``noopener,noreferrer`` (the server, not the browser, resolves the Cloud URL
   from the confirmed AutoCount docKey);
-* "Copy invoice number" copies the server-returned ``inv.doc_no`` via the
-  existing ``showBanner(message, kind)`` signature;
+* there is no "Copy invoice number" button and no clipboard handler on the
+  detail screen (Cloud is the single place where Print, Export PDF, and Share
+  happen);
 * a short note says Print, Export PDF, and Share happen in AutoCount Cloud;
 * the existing "Edit lines" action and the cancelled/old read-only messages are
   preserved;
@@ -40,6 +41,16 @@ def _render_invoice_detail_body(source):
     return match.group(1)
 
 
+def _render_result_body(source):
+    match = re.search(
+        r"function renderResultScreen\(\)\s*\{(.*?)\n  \}",
+        source,
+        re.DOTALL,
+    )
+    assert match, "renderResultScreen() not found in app.js"
+    return match.group(1)
+
+
 @pytest.fixture
 def detail_body():
     return _render_invoice_detail_body(_read_app_js())
@@ -56,11 +67,12 @@ def test_detail_opens_same_origin_cloud_report_route_in_new_tab(detail_body):
     assert "noopener,noreferrer" in detail_body
 
 
-def test_detail_copies_server_invoice_number_via_show_banner(detail_body):
-    assert "Copy invoice number" in detail_body
-    assert "inv.doc_no" in detail_body
-    # Uses the existing two-argument banner signature, not a reinvented one.
-    assert "showBanner(" in detail_body
+def test_detail_has_no_copy_button_or_clipboard_handler(detail_body):
+    # The redundant Copy invoice number button is gone; Cloud is the single
+    # handoff for Print, Export PDF, and Share.
+    assert "Copy invoice number" not in detail_body
+    assert "detail-copy-invoice-number-btn" not in detail_body
+    assert "navigator.clipboard" not in detail_body
 
 
 def test_detail_notes_print_pdf_share_happen_in_cloud(detail_body):
@@ -82,11 +94,19 @@ def test_detail_buttons_scoped_and_non_colliding_ids(detail_body):
     # by the post-issue result screen (which uses open-cloud-report-btn).
     assert "invoice-detail-actions" in detail_body
     assert "detail-open-cloud-report-btn" in detail_body
-    assert "detail-copy-invoice-number-btn" in detail_body
+    # No copy button on the detail screen.
+    assert "detail-copy-invoice-number-btn" not in detail_body
     # No collision with the post-issue result screen's own (un-prefixed) ids.
     assert 'id="open-cloud-report-btn"' not in detail_body
     assert 'id="copy-invoice-number-btn"' not in detail_body
     assert 'id="edit-invoice-btn"' in detail_body
+
+
+def test_result_screen_has_no_copy_button_or_clipboard_handler():
+    result_body = _render_result_body(_read_app_js())
+    assert "Copy invoice number" not in result_body
+    assert "copy-invoice-number-btn" not in result_body
+    assert "navigator.clipboard" not in result_body
 
 
 def test_detail_cloud_actions_use_the_stacked_action_wrapper(detail_body):
