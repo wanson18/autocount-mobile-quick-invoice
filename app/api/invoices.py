@@ -15,9 +15,9 @@ Prices are serialised as exact strings, never binary floats.
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 
-from app.config import get_company
+from app.config import get_cloud_invoice_url_template, get_company
 from app.dependencies import (
     get_invoice_edit_service,
     get_invoice_service,
@@ -44,6 +44,7 @@ from app.models.master_data import (
     InvoiceListResponse,
     InvoiceSummary,
 )
+from app.services.cloud_report_link import build_cloud_report_url
 from app.services.invoice_edit_service import (
     EDIT_WINDOW_DAYS,
     is_editable,
@@ -244,3 +245,48 @@ async def get_invoice_pdf(
 ) -> Response:
     content = await master.get_invoice_pdf(get_company(company), invoice_id)
     return Response(content=content, media_type="application/pdf")
+
+
+@router.get(
+    "/{company}/invoices/{doc_no}/cloud-report",
+    include_in_schema=False,
+)
+async def get_cloud_report(
+    company: CompanyKey,
+    doc_no: str,
+    master=Depends(get_master_data),
+) -> RedirectResponse:
+    """Redirect to the verified Cloud report for an issued invoice.
+
+    Hidden from the OpenAPI schema on purpose: it is a mobile deep-link to the
+    AutoCount Cloud report screen, never a Custom GPT action. The route first
+    proves the document exists in the selected account book via ``read_invoice``;
+    a missing invoice raises ``InvoiceNotFoundError`` and falls through to the
+    existing ``invoice_not_found`` (404) handler rather than redirecting.
+
+    The server-confirmed AutoCount ``docKey`` (``invoice.id``) is substituted
+    into the verified Cloud URL template. The client never supplies the template
+    or the account-book path; only the company key and document number travel in
+    the request, and the response carries no AutoCount data or credentials.
+    """
+    invoice = await read_invoice(master, get_company(company), doc_no)
+    template = get_cloud_invoice_url_template()
+    if not template:
+        return JSONResponse(
+            status_code=501,
+            content={
+                "error": "unsupported",
+                "message": "Cloud report URL is not configured on the server",
+            },
+        )
+    try:
+        url = build_cloud_report_url(template, invoice.id)
+    except ValueError:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "server_configuration_error",
+                "message": "Cloud report URL configuration is invalid",
+            },
+        )
+    return RedirectResponse(url=url, status_code=307)

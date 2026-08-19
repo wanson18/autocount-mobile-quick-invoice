@@ -23,6 +23,7 @@ from app.main import app
 from app.models.master_data import (
     CustomerSummary,
     DeliveryAddress,
+    InvoiceSummary,
     PriceHistory,
     ProductSummary,
 )
@@ -79,6 +80,16 @@ class FakeMasterData:
     async def get_invoice_pdf(self, company, invoice_id):
         raise AutoCountUnsupportedError(
             "AutoCount provides no documented invoice PDF endpoint"
+        )
+
+    async def get_invoice(self, company, invoice_no):
+        return InvoiceSummary(
+            id="inv-1",
+            doc_no=invoice_no,
+            doc_date="2026-08-05",
+            debtor_code="C001",
+            total=Decimal("63.00"),
+            lines=(),
         )
 
 
@@ -474,3 +485,46 @@ def test_api_responses_are_not_given_cache_headers(api):
     # The static override must not leak onto JSON responses.
     client, _, _ = api
     assert "cache-control" not in client.get("/api/companies").headers
+
+
+def test_cloud_report_redirect_uses_verified_invoice_and_hides_account_book(api, monkeypatch):
+    monkeypatch.setenv(
+        "AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE",
+        "https://cloud.test.invalid/invoice?docKey={doc_key}",
+    )
+    client, _, _ = api
+    response = client.get(
+        "/api/sdn_bhd/invoices/INV-2026-0001/cloud-report",
+        follow_redirects=False,
+    )
+    assert response.status_code == 307
+    assert response.headers["location"] == (
+        "https://cloud.test.invalid/invoice?docKey=inv-1"
+    )
+    assert SDN_BHD_AB not in response.text
+
+
+def test_cloud_report_redirect_does_not_create_or_update_invoice(api):
+    client, _, _ = api
+    response = client.get(
+        "/api/sdn_bhd/invoices/INV-2026-0001/cloud-report",
+        follow_redirects=False,
+    )
+    assert response.status_code == 501
+
+
+def test_cloud_report_redirect_rejects_invalid_server_template(api, monkeypatch):
+    monkeypatch.setenv(
+        "AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE",
+        "https://cloud.test.invalid/invoice?docKey=9001",
+    )
+    client, _, _ = api
+    response = client.get(
+        "/api/sdn_bhd/invoices/INV-2026-0001/cloud-report",
+        follow_redirects=False,
+    )
+    assert response.status_code == 500
+    assert response.json() == {
+        "error": "server_configuration_error",
+        "message": "Cloud report URL configuration is invalid",
+    }

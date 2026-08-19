@@ -468,9 +468,13 @@
 
     document.getElementById("invoice-detail-total").textContent = "RM " + money(inv.total);
 
-    // is_editable is the server's answer, so the reason is spelled out rather
-    // than the button just being missing.
-    document.getElementById("invoice-detail-actions").innerHTML = inv.is_editable
+    // The actions block is rendered into the scoped detail container so its
+    // controls never collide with the post-issue result screen's own
+    // Open Cloud Report / Copy number buttons. Cancelled and old invoices keep
+    // Cloud access because it is read-only; only "Edit lines" is gated on
+    // is_editable.
+    const actionsEl = document.getElementById("invoice-detail-actions");
+    let html = inv.is_editable
       ? '<button type="button" class="add-item-btn" id="edit-invoice-btn">Edit lines</button>'
       : '<div class="readonly-note">' +
         (inv.is_cancelled
@@ -478,9 +482,23 @@
           : "This invoice is more than " + EDIT_WINDOW_DAYS +
             " days old. Correct it in AutoCount directly.") +
         "</div>";
+    // The server (not the browser) resolves the Cloud URL from the confirmed
+    // AutoCount docKey; the client only hands over company + doc_no.
+    html +=
+      '<div class="result-actions detail-cloud-actions">' +
+      '<button type="button" class="btn btn-primary" id="detail-open-cloud-report-btn">Open Cloud Report</button>' +
+      '</div>' +
+      '<div class="status-note">Print, Export PDF, and Share are done in the AutoCount Cloud report screen that opens.</div>';
+    actionsEl.innerHTML = html;
 
     const editBtn = document.getElementById("edit-invoice-btn");
     if (editBtn) editBtn.onclick = startEdit;
+
+    document.getElementById("detail-open-cloud-report-btn").onclick = () => {
+      const url = "/api/" + encodeURIComponent(state.company.key) +
+        "/invoices/" + encodeURIComponent(inv.doc_no) + "/cloud-report";
+      window.open(url, "_blank", "noopener,noreferrer");
+    };
   }
 
   // ---------- Branch: edit an issued invoice's lines ----------
@@ -905,7 +923,18 @@
         '<div class="status-icon">✅</div>' +
         '<div class="status-title">Invoice issued</div>' +
         '<div class="status-detail">Invoice <b>' + escapeHtml(r.invoice_number) + '</b> was created in ' +
-        escapeHtml(state.company.name) + '.<br><br>Open AutoCount to share the PDF.</div>';
+        escapeHtml(state.company.name) + '.</div>' +
+        '<div class="result-actions">' +
+        '<button class="btn btn-primary" id="open-cloud-report-btn">Open Cloud Report</button>' +
+        '</div>' +
+        '<div class="status-note">Print, Export PDF, and Share are done in the AutoCount Cloud report screen that opens.</div>';
+
+      const openBtn = document.getElementById("open-cloud-report-btn");
+      openBtn.addEventListener("click", () => {
+        const url = "/api/" + encodeURIComponent(state.company.key) +
+          "/invoices/" + encodeURIComponent(r.invoice_number) + "/cloud-report";
+        window.open(url, "_blank", "noopener,noreferrer");
+      });
     } else if (state.issueResult && !state.issueResult.ok) {
       resultCard.innerHTML =
         '<div class="status-icon">⚠️</div>' +

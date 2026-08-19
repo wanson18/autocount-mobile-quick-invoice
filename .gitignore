@@ -12,3 +12,5 @@ __pycache__/
 
 # Review artifacts
 review.txt
+.vercel
+.env*

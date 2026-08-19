@@ -33,7 +33,13 @@ handled manually by the user.
 - **Blocked:** official PDF sharing — AutoCount documents no PDF/print
   mechanism; the endpoint fails closed until one exists (see
   [`docs/autocount/pdf-spike.md`](docs/autocount/pdf-spike.md)). The mobile
-  page relies on opening AutoCount directly to share the PDF instead.
+  page instead offers **Open Cloud Report**, a hidden server-side redirect
+  (`GET /api/{company}/invoices/{doc_no}/cloud-report`, excluded from the
+  Custom GPT schema) that opens the verified AutoCount Cloud report screen
+  where Print / Export PDF / Share happen. The same handoff is available from
+  both the post-issue result screen and the Recent Invoice detail screen. Its
+  live fresh-tab stability and visual report/Print behavior are pending Task 4
+  verification.
 
 ## Architecture
 
@@ -130,6 +136,7 @@ uv pip install -e ".[dev]"        # fastapi, uvicorn, pydantic, httpx, psycopg, 
 | `AUTOCOUNT_API_KEY` | yes | AutoCount Cloud Integration API Key |
 | `AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE` | yes | Enterprise account-book ID |
 | `AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD` | yes | Sdn Bhd account-book ID |
+| `AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE` | no (required for Cloud handoff) | Server-side HTTPS AutoCount Cloud report template with one `{doc_key}` placeholder; keep the account-book path out of source and browser assets |
 | `INVOICE_REQUESTS_DB` | no | SQLite idempotency DB path (default `data/invoice_requests.db`) — used only when `POSTGRES_URL`/`DATABASE_URL` is unset |
 | `POSTGRES_URL` or `DATABASE_URL` | no (required on Vercel) | Postgres connection string; when set, idempotency storage switches from SQLite to Postgres. Required on serverless hosts (Vercel) where the local filesystem does not persist between invocations |
 
@@ -150,8 +157,13 @@ registered as a Custom GPT Action; the Action pins the company to
 `app/static/index.html` is a single-page mobile web app served from `/` —
 company → customer/address → items (qty, price prefilled from price history)
 → review → issue. It calls the same REST API as the Custom GPT Action. There
-is no PDF/share step: open AutoCount directly to share the official invoice
-PDF after issuing.
+is no PDF/share step inside the app. After issuing, the result screen offers
+**Open Cloud Report** (a new-tab deep link to the verified AutoCount Cloud
+report screen, opened with `noopener,noreferrer`). Print, Export PDF, and Share
+are all performed in that Cloud report screen. The
+deep link route is hidden from the Custom GPT schema and substitutes the
+server-confirmed AutoCount `docKey` into a server-side URL template — the
+account-book path and any credentials live only in the server environment.
 
 Each issue attempt generates one `crypto.randomUUID()` idempotency key before
 the request and reuses it on retry, so a flaky connection or a second tap
@@ -173,6 +185,7 @@ npx vercel env add AUTOCOUNT_API_KEY_ID production
 npx vercel env add AUTOCOUNT_API_KEY production
 npx vercel env add AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE production
 npx vercel env add AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD production
+npx vercel env add AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE production
 npx vercel env add POSTGRES_URL production   # required — see below
 npx vercel --prod
 ```
