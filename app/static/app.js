@@ -905,7 +905,30 @@
         '<div class="status-icon">✅</div>' +
         '<div class="status-title">Invoice issued</div>' +
         '<div class="status-detail">Invoice <b>' + escapeHtml(r.invoice_number) + '</b> was created in ' +
-        escapeHtml(state.company.name) + '.<br><br>Open AutoCount to share the PDF.</div>';
+        escapeHtml(state.company.name) + '.</div>' +
+        '<div class="result-actions">' +
+        '<button class="btn btn-primary" id="open-cloud-report-btn">Open Cloud Report</button>' +
+        '<button class="btn btn-secondary" id="copy-invoice-number-btn">Copy invoice number</button>' +
+        '</div>' +
+        '<div class="status-note">Print, Export PDF, and Share are done in the AutoCount Cloud report screen that opens.</div>';
+
+      const openBtn = document.getElementById("open-cloud-report-btn");
+      openBtn.addEventListener("click", () => {
+        const url = "/api/" + encodeURIComponent(state.company.key) +
+          "/invoices/" + encodeURIComponent(r.invoice_number) + "/cloud-report";
+        window.open(url, "_blank", "noopener,noreferrer");
+      });
+
+      const copyBtn = document.getElementById("copy-invoice-number-btn");
+      copyBtn.addEventListener("click", async () => {
+        const number = r.invoice_number;
+        try {
+          await navigator.clipboard.writeText(number);
+          showBanner("Invoice number copied: " + number, "success");
+        } catch {
+          showBanner("Copy this invoice number manually: " + number, "info");
+        }
+      });
     } else if (state.issueResult && !state.issueResult.ok) {
       resultCard.innerHTML =
         '<div class="status-icon">⚠️</div>' +
