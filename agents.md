@@ -2,7 +2,8 @@
 
 ## Rules & Constraints
 
-- **Strict Scope:** Focus on mobile invoice creation, AutoCount entry, and e-Invoice flow. Do not add unapproved features.
+- **Strict Scope:** Focus on mobile invoice creation, AutoCount entry, e-Invoice flow, and office print of the official Cloud report. Do not add unapproved features.
+- **Office print:** The iPhone only sends company + document number. Print routes are hidden from the Custom GPT schema (`include_in_schema=False`). Never return account-book IDs, `PRINT_AGENT_TOKEN`, or the Cloud report URL to the mobile client. The Windows agent is the only caller that may receive the resolved Cloud URL. There is no AutoCount PDF API — do not invent one, scrape Cloud HTML, or generate a homemade invoice layout.
 - **Workflow:** Implement code task-by-task based on `autocount_mobile_invoice_v1_plan.md` (see also `autocount_mobile_invoice_v1_spec.md` for requirements).
 - **Testing:** Always run `pytest tests/` before committing. Prefer adding a regression test over a one-off manual check.
 - **Git Strategy:** Small, clean commits with a message that states the root cause, not just the symptom (see commit history from 2026-08 for the pattern).
@@ -42,3 +43,6 @@ citations before touching invoice payload or response-parsing code.
 - After any change to `app/autocount/mapping.py` or `app/services/invoice_service.py`, re-run the full suite
   (`pytest tests/`) and, if the change affects the create/response path, re-verify live before considering the fix
   done.
+
+Office printing is a post-issue action: `scripts/print_agent.py` on the always-on Windows PC claims jobs and prints
+the official Cloud report with Google Chrome to `EPSONE85FF0 (L6460 Series)` by that exact printer name. Setup is in [`scripts/README.md`](scripts/README.md).

@@ -1,0 +1,9 @@
+{
+  "api_base_url": "https://autocount-mobile-quick-invoice.vercel.app",
+  "token": "paste-the-same-PRINT_AGENT_TOKEN-as-on-the-server",
+  "printer_name": "EPSONE85FF0 (L6460 Series)",
+  "poll_interval_seconds": 3,
+  "print_wait_seconds": 30,
+  "chrome_user_data_dir": "",
+  "dry_run": false
+}

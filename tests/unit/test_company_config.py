@@ -15,7 +15,11 @@ from app.config import (
     CompanyConfig,
     CompanyConfigError,
     CompanyListing,
+    get_cloud_invoice_url_template,
     get_company,
+    get_office_printer_name,
+    get_print_agent_token,
+    get_print_job_claim_lease_seconds,
     list_companies,
 )
 from app.models.company import CompanyKey
@@ -184,3 +188,42 @@ def test_per_company_credential_whitespace_is_stripped():
     }
     enterprise = get_company(CompanyKey.ENTERPRISE, env)
     assert (enterprise.key_id, enterprise.api_key) == ("ent-key-id", "ent-api-key")
+
+
+def test_print_agent_token_and_printer_are_optional_until_used():
+    assert get_print_agent_token(ENV) is None
+    assert get_office_printer_name(ENV) is None
+    assert get_cloud_invoice_url_template(ENV) is None
+
+
+def test_print_agent_token_and_printer_are_stripped():
+    env = {
+        **ENV,
+        "PRINT_AGENT_TOKEN": "  secret-token  ",
+        "OFFICE_PRINTER_NAME": "  EPSONE85FF0 (L6460 Series)  ",
+    }
+    assert get_print_agent_token(env) == "secret-token"
+    assert get_office_printer_name(env) == "EPSONE85FF0 (L6460 Series)"
+
+
+def test_blank_print_config_is_treated_as_missing():
+    env = {
+        **ENV,
+        "PRINT_AGENT_TOKEN": "   ",
+        "OFFICE_PRINTER_NAME": "",
+        "AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE": " ",
+    }
+    assert get_print_agent_token(env) is None
+    assert get_office_printer_name(env) is None
+    assert get_cloud_invoice_url_template(env) is None
+
+
+def test_claim_lease_defaults_and_rejects_invalid_values():
+    assert get_print_job_claim_lease_seconds(ENV) == 600
+    assert get_print_job_claim_lease_seconds(
+        {**ENV, "PRINT_JOB_CLAIM_LEASE_SECONDS": "120"}
+    ) == 120
+    with pytest.raises(CompanyConfigError, match="positive integer"):
+        get_print_job_claim_lease_seconds(
+            {**ENV, "PRINT_JOB_CLAIM_LEASE_SECONDS": "0"}
+        )

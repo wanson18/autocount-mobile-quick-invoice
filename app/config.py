@@ -39,6 +39,23 @@ ENV_API_KEY_SDN_BHD = "AUTOCOUNT_API_KEY_WANSON_SDN_BHD"
 # Never sent to the client and never embedded in browser assets or the OpenAPI schema.
 ENV_CLOUD_INVOICE_URL_TEMPLATE = "AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE"
 
+# Shared secret the office Windows print agent sends as
+# ``Authorization: Bearer ...``. Never returned to the mobile client and never
+# placed in the OpenAPI schema. Agent claim/complete routes fail closed when
+# this is unset.
+ENV_PRINT_AGENT_TOKEN = "PRINT_AGENT_TOKEN"
+
+# Exact Windows printer name the office agent prints to. The verified office
+# printer is ``EPSONE85FF0 (L6460 Series)``. Required to enqueue a job so a
+# misconfigured server cannot queue work that cannot print.
+ENV_OFFICE_PRINTER_NAME = "OFFICE_PRINTER_NAME"
+
+# How long a claimed print job may stay in ``printing`` before another agent
+# may take it. Optional; defaults to 600 seconds.
+ENV_PRINT_JOB_CLAIM_LEASE_SECONDS = "PRINT_JOB_CLAIM_LEASE_SECONDS"
+
+DEFAULT_PRINT_JOB_CLAIM_LEASE_SECONDS = 600
+
 _DISPLAY_NAMES = {
     CompanyKey.ENTERPRISE: "Wanson Enterprise",
     CompanyKey.SDN_BHD: "Wanson Enterprise (M) Sdn Bhd",
@@ -165,3 +182,49 @@ def get_cloud_invoice_url_template(env: Mapping[str, str] | None = None) -> str 
         env = os.environ
     template = env.get(ENV_CLOUD_INVOICE_URL_TEMPLATE, "").strip()
     return template or None
+
+
+def get_print_agent_token(env: Mapping[str, str] | None = None) -> str | None:
+    """Return the print-agent shared secret, or ``None`` if unset.
+
+    The token is server-side only. Agent routes compare it with
+    ``secrets.compare_digest``; the mobile client never sees it.
+    """
+    if env is None:
+        env = os.environ
+    token = env.get(ENV_PRINT_AGENT_TOKEN, "").strip()
+    return token or None
+
+
+def get_office_printer_name(env: Mapping[str, str] | None = None) -> str | None:
+    """Return the configured office Windows printer name, or ``None`` if unset.
+
+    Enqueue fails closed when this is missing so a job cannot be queued for a
+    printer the office agent does not have.
+    """
+    if env is None:
+        env = os.environ
+    name = env.get(ENV_OFFICE_PRINTER_NAME, "").strip()
+    return name or None
+
+
+def get_print_job_claim_lease_seconds(
+    env: Mapping[str, str] | None = None,
+) -> int:
+    """Seconds a claimed job may stay ``printing`` before it can be reclaimed."""
+    if env is None:
+        env = os.environ
+    raw = env.get(ENV_PRINT_JOB_CLAIM_LEASE_SECONDS, "").strip()
+    if not raw:
+        return DEFAULT_PRINT_JOB_CLAIM_LEASE_SECONDS
+    try:
+        seconds = int(raw)
+    except ValueError:
+        raise CompanyConfigError(
+            f"{ENV_PRINT_JOB_CLAIM_LEASE_SECONDS} must be a positive integer"
+        ) from None
+    if seconds < 1:
+        raise CompanyConfigError(
+            f"{ENV_PRINT_JOB_CLAIM_LEASE_SECONDS} must be a positive integer"
+        )
+    return seconds
