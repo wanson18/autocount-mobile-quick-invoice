@@ -22,7 +22,8 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from app.api import companies, customers, invoices, products
+from app.api import companies, customers, invoices, print_jobs, products
+from app.api.print_jobs import PrintAgentUnauthorizedError
 from app.autocount.errors import (
     AutoCountAmbiguousWriteError,
     AutoCountConfigError,
@@ -33,6 +34,10 @@ from app.autocount.errors import (
     AutoCountUnsupportedError,
 )
 from app.config import CompanyConfigError
+from app.repositories.print_job_repository import (
+    PrintJobNotFoundError,
+    PrintJobStateError,
+)
 from app.repositories.request_repository import IdempotencyConflictError
 from app.services.invoice_edit_service import (
     InvoiceChangedError,
@@ -47,6 +52,7 @@ from app.services.invoice_service import (
     InvoiceServiceError,
     InvoiceValidationError,
 )
+from app.services.print_jobs import PrintConfigurationError, PrintUnavailableError
 
 app = FastAPI(
     title="AutoCount Mobile Quick Invoice",
@@ -63,6 +69,7 @@ app.include_router(companies.router, prefix="/api")
 app.include_router(customers.router, prefix="/api")
 app.include_router(products.router, prefix="/api")
 app.include_router(invoices.router, prefix="/api")
+app.include_router(print_jobs.router, prefix="/api")
 
 class RevalidatingStaticFiles(StaticFiles):
     """Static files the browser must revalidate rather than guess about.
@@ -250,6 +257,41 @@ async def company_config_error_handler(
     request: Request, exc: CompanyConfigError
 ) -> JSONResponse:
     return _error(500, "server_configuration_error", str(exc))
+
+
+@app.exception_handler(PrintUnavailableError)
+async def print_unavailable_error_handler(
+    request: Request, exc: PrintUnavailableError
+) -> JSONResponse:
+    return _error(501, "unsupported", str(exc))
+
+
+@app.exception_handler(PrintConfigurationError)
+async def print_configuration_error_handler(
+    request: Request, exc: PrintConfigurationError
+) -> JSONResponse:
+    return _error(500, "server_configuration_error", str(exc))
+
+
+@app.exception_handler(PrintAgentUnauthorizedError)
+async def print_agent_unauthorized_error_handler(
+    request: Request, exc: PrintAgentUnauthorizedError
+) -> JSONResponse:
+    return _error(401, "unauthorized", "print agent token is missing or invalid")
+
+
+@app.exception_handler(PrintJobNotFoundError)
+async def print_job_not_found_error_handler(
+    request: Request, exc: PrintJobNotFoundError
+) -> JSONResponse:
+    return _error(404, "print_job_not_found", str(exc))
+
+
+@app.exception_handler(PrintJobStateError)
+async def print_job_state_error_handler(
+    request: Request, exc: PrintJobStateError
+) -> JSONResponse:
+    return _error(409, "print_job_conflict", str(exc))
 
 
 @app.exception_handler(Exception)

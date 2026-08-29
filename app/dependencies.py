@@ -39,6 +39,7 @@ ENV_DATABASE_URL = "DATABASE_URL"
 _client_instance: AutoCountClient | None = None
 _master_data_instance: AutoCountMasterDataAdapter | None = None
 _repository_instance: object | None = None
+_print_job_repository_instance: object | None = None
 _service_instance: InvoiceService | None = None
 _edit_service_instance: InvoiceEditService | None = None
 
@@ -78,6 +79,28 @@ def _get_repository() -> object:
                 Path(os.environ.get(ENV_DB_PATH, DEFAULT_DB_PATH))
             )
     return _repository_instance
+
+
+def get_print_job_repository() -> object:
+    """Build the print-job repository: Postgres when a DSN is configured,
+    SQLite otherwise (same switch as the idempotency repository).
+    """
+    global _print_job_repository_instance
+    if _print_job_repository_instance is None:
+        dsn = os.environ.get(ENV_POSTGRES_URL) or os.environ.get(ENV_DATABASE_URL)
+        if dsn:
+            from app.repositories.postgres_print_job_repository import (
+                PostgresPrintJobRepository,
+            )
+
+            _print_job_repository_instance = PostgresPrintJobRepository(dsn)
+        else:
+            from app.repositories.print_job_repository import PrintJobRepository
+
+            _print_job_repository_instance = PrintJobRepository(
+                Path(os.environ.get(ENV_DB_PATH, DEFAULT_DB_PATH))
+            )
+    return _print_job_repository_instance
 
 
 def get_invoice_service() -> InvoiceService:
