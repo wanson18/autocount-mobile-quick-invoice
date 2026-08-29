@@ -81,18 +81,17 @@ first attempt; the next attempt with the **same** key either completes the
 invoice (one match in the listing) or returns a reconciliation message — it
 never creates a second invoice.
 
-## 7. Office print (optional, needs the Windows agent)
+## 7. Cloud report handoff (print via Cloud + Epson app)
 
 | Check | Expected |
 |---|---|
-| Tap **Print** on the post-issue screen | Status moves queued → printing → printed (or failed with a readable message). No Cloud URL appears in the page or in DevTools JSON. |
-| Tap **Print** on a Recent invoice | Same status machine; invoice is unchanged in AutoCount. |
-| Agent not running | Phone stays on queued until the agent claims, or shows failed if enqueue config is missing (`501`). |
+| Tap **Open Cloud Report** on the post-issue screen | New tab opens the official AutoCount Cloud report. No homemade PDF. |
+| Tap **Open Cloud Report** on a Recent invoice | Same Cloud report; invoice is unchanged in AutoCount. |
+| No **Print** / **Office Print** button | Phone cannot queue a Windows print-agent job. |
 | `/openapi.json` | No `/print` or `/print-agent` paths. |
 
-Full agent setup is in [`scripts/README.md`](../scripts/README.md). Chrome at
-`C:\Program Files\Google\Chrome\Application\chrome.exe` prints to the exact
-Windows printer name `EPSONE85FF0 (L6460 Series)` — never the Windows default.
+Print paper copies from AutoCount Cloud with the Epson app. This app does
+not run an office print agent.
 
 ## 8. After local acceptance — deploy the GPT Action
 

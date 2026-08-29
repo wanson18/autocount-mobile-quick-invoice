@@ -7,12 +7,9 @@ __pycache__/
 # Test artifacts
 .pytest_cache/
 
-# Environment — account book IDs, credentials, and print-agent token are secrets
+# Environment — account book IDs and credentials are secrets
 .env
 .env*
-
-# Office print agent local config (token + printer)
-scripts/print-agent.local.json
 
 # Review artifacts
 review.txt
