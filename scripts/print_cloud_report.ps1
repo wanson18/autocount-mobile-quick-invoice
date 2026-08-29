@@ -12,15 +12,27 @@
 # then close Chrome before running the agent:
 #   "C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir="%LOCALAPPDATA%\AutocountPrintAgent\ChromeProfile"
 
+# Keep this a simple script: no Parameter attributes and no CmdletBinding.
+# A nested advanced helper inside an advanced script caused Windows
+# PowerShell 5.1 AmbiguousParameterSet at the helper call site; renaming
+# the helper did not fix it.
+
 param(
-    [Parameter(Mandatory = $true)][string]$Url,
-    [Parameter(Mandatory = $true)][string]$PrinterName,
+    [string]$Url,
+    [string]$PrinterName,
     [int]$WaitSeconds = 30,
     [string]$UserDataDir = "",
     [string]$ChromePath = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not $Url) {
+    throw "Url is required"
+}
+if (-not $PrinterName) {
+    throw "PrinterName is required"
+}
 
 if ($Url -notmatch '^https://') {
     throw "Cloud report URL must be https"
@@ -54,36 +66,6 @@ $workDir = Join-Path $env:TEMP "AutocountPrintAgent"
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 $pdfPath = Join-Path $workDir ("invoice-" + [guid]::NewGuid().ToString() + ".pdf")
 
-function Send-PdfToNamedPrinter {
-    param(
-        [Parameter(Mandatory = $true)][string]$PdfPath,
-        [Parameter(Mandatory = $true)][string]$PrinterName
-    )
-
-    # FolderItem.InvokeVerbEx("printto", name) targets that printer without
-    # touching the Windows default. Start-Process -Verb PrintTo is the same
-    # contract if the shell verb is missing on the COM object.
-    $folderPath = Split-Path -LiteralPath $PdfPath
-    $fileName = Split-Path -LiteralPath $PdfPath -Leaf
-    $shell = New-Object -ComObject Shell.Application
-    $folder = $shell.NameSpace($folderPath)
-    $item = $folder.ParseName($fileName)
-    if ($item) {
-        try {
-            $item.InvokeVerbEx("printto", $PrinterName) | Out-Null
-            return
-        } catch {
-            # Fall through to Start-Process PrintTo, still with the exact name.
-        }
-    }
-
-    try {
-        Start-Process -FilePath $PdfPath -Verb PrintTo -ArgumentList $PrinterName -Wait -ErrorAction Stop
-    } catch {
-        throw "Windows could not PrintTo printer '$PrinterName'. The agent never uses the Windows default printer."
-    }
-}
-
 $chromeArgs = @(
     "--headless=new",
     "--disable-gpu",
@@ -111,7 +93,40 @@ if (-not (Test-Path -LiteralPath $pdfPath) -or (Get-Item -LiteralPath $pdfPath).
 }
 
 try {
-    Send-PdfToNamedPrinter -PdfPath $pdfPath -PrinterName $PrinterName
+    # FolderItem.InvokeVerbEx("printto", name) targets that printer without
+    # touching the Windows default. ProcessStartInfo printto is the fallback
+    # if the shell verb is missing on the COM object. Never combine
+    # Start-Process -Verb with -ArgumentList (different 5.1 parameter sets).
+    $sentToPrinter = $false
+    $folderPath = Split-Path -LiteralPath $pdfPath
+    $fileName = Split-Path -LiteralPath $pdfPath -Leaf
+    $shell = New-Object -ComObject Shell.Application
+    $folder = $shell.NameSpace($folderPath)
+    $item = $folder.ParseName($fileName)
+    if ($item) {
+        try {
+            $item.InvokeVerbEx("printto", $PrinterName) | Out-Null
+            $sentToPrinter = $true
+        } catch {
+            # Fall through to ProcessStartInfo printto, still with the exact name.
+        }
+    }
+
+    if (-not $sentToPrinter) {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $pdfPath
+        $psi.UseShellExecute = $true
+        $psi.Verb = "printto"
+        $psi.Arguments = '"' + $PrinterName + '"'
+        try {
+            $printProc = [System.Diagnostics.Process]::Start($psi)
+            if ($printProc) {
+                $printProc.WaitForExit()
+            }
+        } catch {
+            throw "Windows could not printto printer '$PrinterName'. The agent never uses the Windows default printer."
+        }
+    }
 } finally {
     Start-Sleep -Seconds 2
     Remove-Item -LiteralPath $pdfPath -Force -ErrorAction SilentlyContinue
