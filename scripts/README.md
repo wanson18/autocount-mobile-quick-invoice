@@ -2,7 +2,9 @@
 
 The iPhone PWA queues a print job. This agent runs on the **always-on office
 Windows PC**, claims the job, opens the official AutoCount Cloud invoice
-report, and sends it to **EPSONE85FF0 (L6460 Series)**.
+report in **Google Chrome**, and sends it to **EPSONE85FF0 (L6460 Series)**
+by that exact printer name. It never reads or changes the Windows default
+printer.
 
 The phone never receives the Cloud URL or the account-book path. The agent
 does, after authenticating with `PRINT_AGENT_TOKEN`.
@@ -14,18 +16,20 @@ does, after authenticating with `PRINT_AGENT_TOKEN`.
    `scripts/print-agent.local.json` (gitignored) and fill in the same
    `PRINT_AGENT_TOKEN` you set on Vercel.
 3. Confirm the printer name is exactly `EPSONE85FF0 (L6460 Series)`
-   (Windows Settings → Printers).
-4. **Log Edge into AutoCount Cloud in the agent's profile**, then close Edge:
+   (Windows Settings → Printers). Chrome is expected at
+   `C:\Program Files\Google\Chrome\Application\chrome.exe`.
+4. **Log Chrome into AutoCount Cloud in the agent's profile**, then close
+   Chrome:
 
    ```bat
-   "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" --user-data-dir="%LOCALAPPDATA%\AutocountPrintAgent\EdgeProfile"
+   "C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir="%LOCALAPPDATA%\AutocountPrintAgent\ChromeProfile"
    ```
 
-   Sign in, open any invoice report once, then quit Edge. The Cloud report
+   Sign in, open any invoice report once, then quit Chrome. The Cloud report
    host needs that session cookie. If prints later fail with a login/PDF
    error, repeat this step.
 
-Leave that profile window **closed** while the agent runs; Edge will not
+Leave that profile window **closed** while the agent runs; Chrome will not
 share a locked user-data directory.
 
 ## Run
@@ -53,7 +57,7 @@ Useful flags:
 
 Environment variables override the JSON file: `PRINT_API_BASE_URL`,
 `PRINT_AGENT_TOKEN`, `OFFICE_PRINTER_NAME`, `PRINT_POLL_INTERVAL_SECONDS`,
-`PRINT_WAIT_SECONDS`, `PRINT_EDGE_USER_DATA_DIR`, `PRINT_DRY_RUN`.
+`PRINT_WAIT_SECONDS`, `PRINT_CHROME_USER_DATA_DIR`, `PRINT_DRY_RUN`.
 
 ## Start with Windows
 
@@ -67,7 +71,7 @@ and put it in `shell:startup`. `pythonw` hides the console; use `python.exe`
 instead if you want a log window.
 
 **Scheduled Task (survives logoff if you pick "Run whether user is logged on
-or not" and store the Cloud login in that user's Edge profile):**
+or not" and store the Cloud login in that user's Chrome profile):**
 
 ```powershell
 $python = (Get-Command python.exe).Source
@@ -85,9 +89,11 @@ not scrape Cloud HTML. It:
 
 1. `POST /api/print-agent/jobs/next` with `Authorization: Bearer …`
 2. Receives the server-resolved Cloud report HTTPS URL
-3. Has Edge render that official report to a temporary PDF
-4. Sends the PDF to `EPSONE85FF0 (L6460 Series)` with Windows `PrintTo`
+3. Has Chrome at `C:\Program Files\Google\Chrome\Application\chrome.exe`
+   render that official report to a temporary PDF
+4. Sends the PDF to `EPSONE85FF0 (L6460 Series)` with Windows `PrintTo` /
+   `printto` using that exact name (never the Windows default printer)
 5. `POST /api/print-agent/jobs/{id}/complete` with `printed` or `failed`
 
 If the Cloud session has expired, the job fails and the iPhone shows the
-error. Log into AutoCount Cloud in the print-agent Edge profile again.
+error. Log into AutoCount Cloud in the print-agent Chrome profile again.

@@ -90,7 +90,9 @@ never creates a second invoice.
 | Agent not running | Phone stays on queued until the agent claims, or shows failed if enqueue config is missing (`501`). |
 | `/openapi.json` | No `/print` or `/print-agent` paths. |
 
-Full agent setup is in [`scripts/README.md`](../scripts/README.md). The office printer name is exactly `EPSONE85FF0 (L6460 Series)`.
+Full agent setup is in [`scripts/README.md`](../scripts/README.md). Chrome at
+`C:\Program Files\Google\Chrome\Application\chrome.exe` prints to the exact
+Windows printer name `EPSONE85FF0 (L6460 Series)` — never the Windows default.
 
 ## 8. After local acceptance — deploy the GPT Action
 

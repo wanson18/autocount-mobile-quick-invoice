@@ -83,7 +83,7 @@ def test_mark_printed_from_printing(repo):
 def test_mark_failed_from_printing_stores_message(repo):
     job = _enqueue(repo)
     repo.claim_next()
-    failed = repo.mark_failed(job.id, "Edge is not logged into AutoCount Cloud")
+    failed = repo.mark_failed(job.id, "Chrome is not logged into AutoCount Cloud")
     assert failed.status is PrintJobStatus.FAILED
     assert "logged into AutoCount Cloud" in failed.error_message
 

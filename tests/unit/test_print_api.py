@@ -210,7 +210,7 @@ def test_complete_failed_stores_message_for_mobile(print_api):
         headers={"Authorization": f"Bearer {PRINT_TOKEN}"},
         json={
             "status": "failed",
-            "error_message": "Edge is not logged into AutoCount Cloud",
+            "error_message": "Chrome is not logged into AutoCount Cloud",
         },
     )
     status = client.get(f"/api/sdn_bhd/invoices/INV-2026-0001/print/{job_id}")

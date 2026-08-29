@@ -40,7 +40,7 @@ CREATE INDEX IF NOT EXISTS print_jobs_status_created
 """
 
 #: How long a claimed job may stay in ``printing`` before another agent may
-#: take it. Long enough for Edge to render the Cloud report; short enough
+#: take it. Long enough for Chrome to render the Cloud report; short enough
 #: that a crashed agent does not block the office printer.
 DEFAULT_CLAIM_LEASE_SECONDS = 600
 

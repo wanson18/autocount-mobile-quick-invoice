@@ -45,4 +45,4 @@ citations before touching invoice payload or response-parsing code.
   done.
 
 Office printing is a post-issue action: `scripts/print_agent.py` on the always-on Windows PC claims jobs and prints
-the official Cloud report to `EPSONE85FF0 (L6460 Series)`. Setup is in [`scripts/README.md`](scripts/README.md).
+the official Cloud report with Google Chrome to `EPSONE85FF0 (L6460 Series)` by that exact printer name. Setup is in [`scripts/README.md`](scripts/README.md).

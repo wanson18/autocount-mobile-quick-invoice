@@ -228,4 +228,4 @@ at a scratch database and run `pytest tests/unit/test_postgres_request_repositor
 - [`autocount_mobile_invoice_v1_spec.md`](autocount_mobile_invoice_v1_spec.md) — requirements specification
 - [`autocount_mobile_invoice_v1_plan.md`](autocount_mobile_invoice_v1_plan.md) — implementation plan (Tasks 1–15)
 - [`docs/autocount/pdf-spike.md`](docs/autocount/pdf-spike.md) — official-PDF spike findings
-- [`scripts/README.md`](scripts/README.md) — office Windows print agent (Epson L6460)
+- [`scripts/README.md`](scripts/README.md) — office Windows print agent (Chrome → EPSONE85FF0 (L6460 Series))

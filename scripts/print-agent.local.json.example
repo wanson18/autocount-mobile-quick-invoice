@@ -4,6 +4,6 @@
   "printer_name": "EPSONE85FF0 (L6460 Series)",
   "poll_interval_seconds": 3,
   "print_wait_seconds": 30,
-  "edge_user_data_dir": "",
+  "chrome_user_data_dir": "",
   "dry_run": false
 }

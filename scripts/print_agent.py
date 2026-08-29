@@ -1,9 +1,10 @@
 """Office Windows print agent.
 
 Polls the live API, claims a queued invoice print job, opens the official
-AutoCount Cloud report in Microsoft Edge using the office PC's Cloud login,
-and sends it to the named Epson. Configure via environment variables or a
-gitignored ``print-agent.local.json`` next to this script.
+AutoCount Cloud report in Google Chrome using the office PC's Cloud login,
+and sends it to printer ``EPSONE85FF0 (L6460 Series)`` by that exact name.
+Configure via environment variables or a gitignored ``print-agent.local.json``
+next to this script.
 
 The Cloud report URL is received only after claiming a job with
 ``PRINT_AGENT_TOKEN``. It is never logged (the account-book path lives in
@@ -42,7 +43,7 @@ class AgentConfig:
     printer_name: str
     poll_interval_seconds: float = DEFAULT_POLL_INTERVAL
     print_wait_seconds: int = DEFAULT_PRINT_WAIT_SECONDS
-    edge_user_data_dir: str | None = None
+    chrome_user_data_dir: str | None = None
     dry_run: bool = False
 
 
@@ -89,7 +90,9 @@ def load_config(
         "print_wait_seconds", DEFAULT_PRINT_WAIT_SECONDS
     )
     profile = _first(
+        env.get("PRINT_CHROME_USER_DATA_DIR"),
         env.get("PRINT_EDGE_USER_DATA_DIR"),
+        file_values.get("chrome_user_data_dir"),
         file_values.get("edge_user_data_dir"),
     )
     dry_run = _truthy(env.get("PRINT_DRY_RUN")) or bool(file_values.get("dry_run"))
@@ -99,7 +102,7 @@ def load_config(
         printer_name=printer,
         poll_interval_seconds=float(poll),
         print_wait_seconds=int(wait),
-        edge_user_data_dir=profile or None,
+        chrome_user_data_dir=profile or None,
         dry_run=dry_run,
     )
 
@@ -206,10 +209,11 @@ def handle_claimed_job(
 def print_cloud_report(url: str, printer_name: str, config: AgentConfig) -> None:
     """Print the official Cloud report on Windows to the named Epson.
 
-    Opens the Cloud URL in Edge with a dedicated profile (so the office
-    AutoCount Cloud login can persist) and sends that page to the printer.
-    An intermediate PDF is only Edge's rendering of the official Cloud
-    report — not a homemade invoice layout.
+    Opens the Cloud URL in Chrome with a dedicated profile (so the office
+    AutoCount Cloud login can persist) and sends that page to the printer
+    named exactly ``printer_name``. An intermediate PDF is only Chrome's
+    rendering of the official Cloud report — not a homemade invoice layout.
+    The Windows default printer is never read or changed.
     """
     if sys.platform != "win32":
         raise PrintAgentError(
@@ -233,8 +237,8 @@ def print_cloud_report(url: str, printer_name: str, config: AgentConfig) -> None
         "-WaitSeconds",
         str(config.print_wait_seconds),
     ]
-    if config.edge_user_data_dir:
-        args.extend(["-UserDataDir", config.edge_user_data_dir])
+    if config.chrome_user_data_dir:
+        args.extend(["-UserDataDir", config.chrome_user_data_dir])
     completed = subprocess.run(args, capture_output=True, text=True, check=False)
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip() or (
