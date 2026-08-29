@@ -17,7 +17,9 @@ does, after authenticating with `PRINT_AGENT_TOKEN`.
    `PRINT_AGENT_TOKEN` you set on Vercel.
 3. Confirm the printer name is exactly `EPSONE85FF0 (L6460 Series)`
    (Windows Settings → Printers). Chrome is expected at
-   `C:\Program Files\Google\Chrome\Application\chrome.exe`.
+   `C:\Program Files\Google\Chrome\Application\chrome.exe`. If you copy
+   `print_cloud_report.ps1` to `C:\Users\wanso\AutocountPrintAgent\`, copy
+   `set_chrome_print_prefs.py` next to it (sticky printer prefs; optional).
 4. **Log Chrome into AutoCount Cloud in the agent's profile**, then close
    Chrome:
 

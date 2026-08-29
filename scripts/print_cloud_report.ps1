@@ -72,17 +72,6 @@ New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 # Default Chrome profile path we must never stop: %LOCALAPPDATA%\Google\Chrome\User Data
 $defaultChromeUserData = Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data"
 
-function Get-JsonEscaped($value) {
-    if ($null -eq $value) { return "" }
-    $text = [string]$value
-    $text = $text.Replace('\', '\\')
-    $text = $text.Replace('"', '\"')
-    $text = $text.Replace("`r", '\r')
-    $text = $text.Replace("`n", '\n')
-    $text = $text.Replace("`t", '\t')
-    return $text
-}
-
 function Get-ChromeProcessRows {
     try {
         return @(Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction Stop)
@@ -137,69 +126,44 @@ function Stop-ProfileChrome($profileDir) {
     }
 }
 
-function Get-OrCreateDict($parent, $key) {
-    if ($null -eq $parent) {
-        return $null
-    }
-    $current = $null
-    try {
-        $current = $parent[$key]
-    } catch {
-        $current = $null
-    }
-    if ($current -is [System.Collections.IDictionary]) {
-        return $current
-    }
-    $created = New-Object System.Collections.Hashtable
-    $parent[$key] = $created
-    return $created
-}
-
 function Set-ChromePrintPrefs($profileDir, $namedPrinter, $downloadDir) {
-    $defaultDir = Join-Path $profileDir "Default"
-    New-Item -ItemType Directory -Force -Path $defaultDir | Out-Null
-    $prefsPath = Join-Path $defaultDir "Preferences"
-    Add-Type -AssemblyName System.Web.Extensions
-    $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
-    $serializer.MaxJsonLength = [int]::MaxValue
-    $serializer.RecursionLimit = 100
-    $prefs = $null
-    if (Test-Path -LiteralPath $prefsPath) {
-        $raw = [System.IO.File]::ReadAllText($prefsPath)
-        if ($raw -and $raw.Trim().Length -gt 0) {
-            $prefs = $serializer.DeserializeObject($raw)
+    # Best-effort. Do not throw: Print Report / kiosk-printing can still
+    # target the named Epson if sticky prefs are missing.
+    try {
+        $defaultDir = Join-Path $profileDir "Default"
+        New-Item -ItemType Directory -Force -Path $defaultDir | Out-Null
+        $prefsPath = Join-Path $defaultDir "Preferences"
+        $helper = Join-Path $PSScriptRoot "set_chrome_print_prefs.py"
+        if (-not (Test-Path -LiteralPath $helper)) {
+            return
         }
-    }
-    if ($null -eq $prefs) {
-        $prefs = New-Object System.Collections.Hashtable
-    }
-    $escaped = Get-JsonEscaped $namedPrinter
-    $appState = '{"recentDestinations":[{"id":"' + $escaped + '","origin":"local","account":"","displayName":"' + $escaped + '"}],"selectedDestinationId":"' + $escaped + '","version":2,"isHeaderFooterEnabled":false}'
-    $printing = Get-OrCreateDict $prefs "printing"
-    $sticky = Get-OrCreateDict $printing "print_preview_sticky_settings"
-    $sticky["appState"] = $appState
-    $download = Get-OrCreateDict $prefs "download"
-    $download["default_directory"] = $downloadDir
-    $download["prompt_for_download"] = $false
-    $savefile = Get-OrCreateDict $prefs "savefile"
-    $savefile["default_directory"] = $downloadDir
-    $profile = Get-OrCreateDict $prefs "profile"
-    $profile["exit_type"] = "Normal"
-    $profile["exited_cleanly"] = $true
-    $json = $serializer.Serialize($prefs)
-    $utf8 = New-Object System.Text.UTF8Encoding $false
-    $written = $false
-    foreach ($tryWrite in 1..6) {
-        try {
-            [System.IO.File]::WriteAllText($prefsPath, $json, $utf8)
-            $written = $true
-            break
-        } catch {
-            Start-Sleep -Milliseconds 400
+        $python = $null
+        foreach ($candidate in @("python.exe", "python3.exe", "python", "python3")) {
+            $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
+            if ($cmd -and $cmd.Source) {
+                $python = [string]$cmd.Source
+                break
+            }
         }
-    }
-    if (-not $written) {
-        throw "Could not update Chrome print preferences for printer '$namedPrinter'."
+        if (-not $python) { return }
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $python
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.Arguments = (
+            ('"{0}" "{1}" "{2}" "{3}"' -f $helper, $prefsPath, $namedPrinter, $downloadDir)
+        )
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        if ($proc) {
+            $proc.WaitForExit(15000) | Out-Null
+            if (-not $proc.HasExited) {
+                try { $proc.Kill() } catch { }
+            }
+        }
+    } catch {
+        return
     }
 }
 
@@ -701,7 +665,11 @@ Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 
 Stop-ProfileChrome $UserDataDir
-Set-ChromePrintPrefs $UserDataDir $PrinterName $workDir
+try {
+    Set-ChromePrintPrefs $UserDataDir $PrinterName $workDir
+} catch {
+    # Prefs merge is best-effort; continue to Print Report.
+}
 
 $chromePsi = New-Object System.Diagnostics.ProcessStartInfo
 $chromePsi.FileName = $chrome

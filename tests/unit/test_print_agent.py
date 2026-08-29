@@ -176,6 +176,19 @@ def test_print_script_does_not_call_dictionary_contains():
     assert ".Contains($key)" not in source
 
 
+def test_print_script_does_not_roundtrip_prefs_through_javascriptserializer():
+    """JavaScriptSerializer.Serialize of deserialized Chrome Preferences
+    threw circular-reference on PSParameterizedProperty before Chrome opened.
+    Prefs merge belongs in stdlib json, not a serializer round-trip.
+    """
+    source = _print_script_source()
+    assert "JavaScriptSerializer" not in source
+    assert "Serialize($prefs)" not in source
+    assert "ConvertTo-Json" not in source
+    assert "ConvertFrom-Json" not in source
+    assert "set_chrome_print_prefs.py" in source
+
+
 def test_print_script_opens_headed_chrome_not_headless_pdf():
     source = _print_script_source()
     assert "--headless" not in source
@@ -210,10 +223,11 @@ def test_print_script_never_logs_cloud_url():
 
 def test_print_script_merges_named_printer_into_chrome_prefs():
     source = _print_script_source()
-    assert "isHeaderFooterEnabled" in source
-    assert '"origin":"local"' in source or '"origin": "local"' in source
+    assert "set_chrome_print_prefs.py" in source
     assert "Preferences" in source
-    assert "ConvertFrom-Json" in source or "JavaScriptSerializer" in source
+    helper = (ROOT / "scripts" / "set_chrome_print_prefs.py").read_text(encoding="utf-8")
+    assert "isHeaderFooterEnabled" in helper
+    assert '"origin": "local"' in helper or '"origin":"local"' in helper
 
 
 def test_print_script_stops_only_profile_chrome_not_default_user_data():
@@ -260,3 +274,58 @@ def test_print_cloud_report_subprocess_has_timeout():
     source = SCRIPT.read_text(encoding="utf-8")
     assert "timeout=" in source
     assert "TimeoutExpired" in source
+
+
+PREFS_HELPER = ROOT / "scripts" / "set_chrome_print_prefs.py"
+
+
+def load_prefs_helper():
+    spec = importlib.util.spec_from_file_location(
+        "set_chrome_print_prefs", PREFS_HELPER
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_set_chrome_print_prefs_merges_named_printer_and_keeps_unrelated(tmp_path):
+    helper = load_prefs_helper()
+    prefs_path = tmp_path / "Default" / "Preferences"
+    prefs_path.parent.mkdir(parents=True)
+    prefs_path.write_text(
+        json.dumps(
+            {
+                "session": {"restore": True},
+                "download": {"existing": "keep-me"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    download_dir = str(tmp_path / "downloads")
+    helper.merge_chrome_print_prefs(
+        str(prefs_path), PRINTER, download_dir
+    )
+    data = json.loads(prefs_path.read_text(encoding="utf-8"))
+    assert data["session"] == {"restore": True}
+    assert data["download"]["existing"] == "keep-me"
+    app_state = json.loads(data["printing"]["print_preview_sticky_settings"]["appState"])
+    dest = app_state["recentDestinations"][0]
+    assert dest["id"] == PRINTER
+    assert dest["origin"] == "local"
+    assert dest["displayName"] == PRINTER
+    assert app_state["selectedDestinationId"] == PRINTER
+    assert app_state["isHeaderFooterEnabled"] is False
+    assert data["download"]["default_directory"] == download_dir
+    assert data["download"]["prompt_for_download"] is False
+    assert data["savefile"]["default_directory"] == download_dir
+    assert data["profile"]["exit_type"] == "Normal"
+    assert data["profile"]["exited_cleanly"] is True
+
+
+def test_set_chrome_print_prefs_creates_file_when_missing(tmp_path):
+    helper = load_prefs_helper()
+    prefs_path = tmp_path / "Preferences"
+    helper.merge_chrome_print_prefs(str(prefs_path), PRINTER, str(tmp_path))
+    data = json.loads(prefs_path.read_text(encoding="utf-8"))
+    app_state = json.loads(data["printing"]["print_preview_sticky_settings"]["appState"])
+    assert app_state["recentDestinations"][0]["origin"] == "local"
