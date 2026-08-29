@@ -178,16 +178,6 @@
   .status-detail b { color: var(--text); }
   .result-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 22px; }
   .result-actions .btn { width: 100%; }
-  .result-actions .btn-secondary { flex: 1; }
-  .print-status {
-    min-height: 1.4em;
-    font-size: 13px;
-    color: var(--muted);
-    text-align: left;
-  }
-  .print-status.is-queued, .print-status.is-printing { color: var(--warn); }
-  .print-status.is-printed { color: var(--accent); }
-  .print-status.is-failed { color: #fecaca; }
   .status-note { color: var(--muted); font-size: 12.5px; line-height: 1.5; margin-top: 16px; }
 
   footer.actionbar {
@@ -365,6 +355,6 @@
      different URL cannot be answered from that entry, so they fetch it once
      and pick up the no-cache header that keeps them current from then on.
      Bump the date only if that situation ever recurs. -->
-<script src="/app.js?v=2026-08-29"></script>
+<script src="/app.js?v=2026-08-29-no-office-print"></script>
 </body>
 </html>

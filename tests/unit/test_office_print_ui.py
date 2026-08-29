@@ -1,8 +1,7 @@
-"""Recent Invoice / result-screen office Print control contract.
+"""Invoice / result screens have no office Print control.
 
-Static-contract test against ``app/static/app.js``: Print sits next to Open
-Cloud Report, posts only company + doc_no, and never mentions a Cloud URL,
-account-book id, or printer name in the browser source.
+Print via Open Cloud Report (and the Epson app). The phone must not queue
+jobs for a Windows print agent. Open Cloud Report, Edit lines, and Back stay.
 """
 
 from tests.unit.test_recent_invoice_detail_cloud import (
@@ -12,39 +11,53 @@ from tests.unit.test_recent_invoice_detail_cloud import (
 )
 
 
-def test_detail_has_print_next_to_cloud_report():
+def _read_index_html():
+    with open("app/static/index.html", encoding="utf-8") as fh:
+        return fh.read()
+
+
+def test_detail_keeps_cloud_report_and_edit_without_office_print():
     body = _render_invoice_detail_body(_read_app_js())
-    assert 'id="detail-print-office-btn">Print</button>' in body
+    html = _read_index_html()
     assert 'id="detail-open-cloud-report-btn">Open Cloud Report</button>' in body
-    assert body.index("detail-print-office-btn") < body.index(
-        "detail-open-cloud-report-btn"
-    )
+    assert "Edit lines" in body
+    assert 'id="back-btn">Back</button>' in html
+    assert "Print</button>" not in body
+    assert "print-office-btn" not in body
+    assert "detail-print-office-btn" not in body
+    assert "Office Print" not in body
+    assert "office Epson" not in body
+    assert "office printer" not in body.lower()
 
 
-def test_result_has_print_next_to_cloud_report():
+def test_result_keeps_cloud_report_without_office_print():
     body = _render_result_body(_read_app_js())
-    assert 'id="print-office-btn">Print</button>' in body
     assert 'id="open-cloud-report-btn">Open Cloud Report</button>' in body
-    assert body.index("print-office-btn") < body.index("open-cloud-report-btn")
+    assert "Print</button>" not in body
+    assert "print-office-btn" not in body
+    assert "Office Print" not in body
+    assert "office Epson" not in body
 
 
-def test_print_posts_same_origin_job_route():
+def test_phone_does_not_queue_office_print_jobs():
     source = _read_app_js()
-    assert "/print" in source
-    assert "apiPostEmpty" in source
-    assert "wireOfficePrint" in source
-    # Status labels the phone shows.
-    assert "Queued" in source
-    assert "Printing" in source
-    assert "Printed" in source
-    assert "Print failed" in source
+    assert "wireOfficePrint" not in source
+    assert "/print" not in source
+    assert "apiPostEmpty" not in source
+    assert "printPollTimer" not in source
+    assert "PRINT_AGENT" not in source
+    assert "Queued — sending to the office printer" not in source
+    assert "Printing on the office Epson" not in source
 
 
 def test_browser_source_never_embeds_cloud_url_or_printer():
     source = _read_app_js().lower()
-    assert "accounting-report.autocountcloud.com" not in source
-    assert "{doc_key}" not in source
-    assert "account_book" not in source
-    assert "epsone85ff0" not in source
-    assert "print_agent_token" not in source
-    assert "cloud_report_url" not in source
+    html = _read_index_html().lower()
+    for blob in (source, html):
+        assert "accounting-report.autocountcloud.com" not in blob
+        assert "{doc_key}" not in blob
+        assert "account_book" not in blob
+        assert "epsone85ff0" not in blob
+        assert "print_agent_token" not in blob
+        assert "cloud_report_url" not in blob
+        assert "print-agent" not in blob

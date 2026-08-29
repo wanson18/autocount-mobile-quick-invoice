@@ -19,16 +19,11 @@ handled manually by the user.
   for Wanson Enterprise (M) Sdn Bhd end to end (customer search → item
   search → review → issue), confirmed via live browser testing against
   production.
-- **Office print:** After issue (and from Recent invoice detail), **Print**
-  queues a job for the always-on office Windows PC, which prints the official
-  AutoCount Cloud report to **EPSONE85FF0 (L6460 Series)**. The phone shows
-  queued / printing / printed / failed. See
-  [`scripts/README.md`](scripts/README.md).
 - **Implemented:** Tasks 1–9, 11 + historical price lookup — company
   isolation, AutoCount client + payload mapping, idempotent invoice service,
   ambiguous-write reconciliation, master-data search, official-PDF spike
   (fail-closed), price history, and the REST API with the Custom GPT Action
-  schema. **352 tests pass.** Plus a mobile quick-invoice web page and
+  schema. **491 tests pass.** Plus a mobile quick-invoice web page and
   Postgres-backed idempotency storage for serverless deployment (Vercel).
 - **Out of scope:** Task 10 (e-Invoice technical spike) — dropped 2026-08-06.
   e-Invoice/MyInvois submission is handled manually by the user outside this
@@ -44,14 +39,13 @@ handled manually by the user.
   where Print / Export PDF / Share happen. The same handoff is available from
   both the post-issue result screen and the Recent Invoice detail screen. Its
   live fresh-tab stability and visual report/Print behavior are pending Task 4
-  verification. **Office Print** is a separate button on those screens: it
-  does not open Cloud on the phone. It enqueues a job that the office Windows
-  agent prints to the Epson using that same official Cloud report.
+  verification. To print at the office, open that Cloud report and use the
+  Epson app — this app does not queue jobs for a Windows print agent.
 
 ## Architecture
 
 Hexagonal ports-and-adapters, Python 3.11+, FastAPI, Pydantic v2, httpx,
-SQLite or Postgres for idempotency/audit and office print-job metadata:
+SQLite or Postgres for idempotency/audit:
 
 ```text
 app/
@@ -62,11 +56,11 @@ app/
   autocount/         client (Key-ID/API-Key auth), adapter, payload mapping,
                      sanitised error hierarchy
   services/          invoice service (idempotency + reconciliation),
-                     price-history lookup, print-job enqueue
-  repositories/      SQLite and Postgres idempotency + print-job repositories
-  api/               companies, customers, products, invoices, print-job routers
+                     price-history lookup, Cloud report URL builder
+  repositories/      SQLite and Postgres idempotency repositories
+  api/               companies, customers, products, invoices routers
   static/            mobile quick-invoice single-page web app
-scripts/             office Windows print agent (not served by Vercel)
+scripts/             live AutoCount diagnostic/spike scripts (not served by Vercel)
 tests/unit/          contract and unit tests (no live network)
 docs/autocount/      AutoCount research notes (e.g. pdf-spike)
 ```
@@ -82,8 +76,8 @@ Design rules:
   listing before anything else — one exact line match completes it, zero
   fails it, several require manual reconciliation.
 - **Fail closed.** Undocumented AutoCount features (e.g. PDF) raise
-  `501 unsupported`; office print raises `501` when the Cloud report template
-  or office printer name is missing. Upstream errors are sanitised at the
+  `501 unsupported`; Cloud report handoff raises `501` when the Cloud report
+  template is missing. Upstream errors are sanitised at the
   client boundary so
   no credential, account-book ID, or taxpayer data can leak. A malformed or
   unexpected AutoCount response (e.g. a create response missing its
@@ -118,16 +112,13 @@ call, not assumed from a JSON body.
 | POST | `/api/invoices/preview` | `previewInvoicePrices` | Latest prior price per item with source invoice/date |
 | POST | `/api/invoices` | `issueInvoice` | Idempotent issue; `201` on create; marked consequential for GPT |
 | GET | `/api/{company}/invoices/{id}/pdf` | `getInvoicePdf` | Official PDF — currently `501` (no documented mechanism) |
-| POST | `/api/{company}/invoices/{doc_no}/print` | hidden | Queue office print of the Cloud report |
-| GET | `/api/{company}/invoices/{doc_no}/print/{job_id}` | hidden | Mobile print status (queued / printing / printed / failed) |
-| POST | `/api/print-agent/jobs/next` | hidden | Agent: claim next job (`Bearer PRINT_AGENT_TOKEN`) |
-| POST | `/api/print-agent/jobs/{job_id}/complete` | hidden | Agent: report printed or failed |
+| GET | `/api/{company}/invoices/{doc_no}/cloud-report` | hidden | Redirect to the official AutoCount Cloud report |
 | GET | `/openapi.json` | — | Custom GPT Action schema |
 | GET | `/` | — | Mobile quick-invoice web page |
 
 Errors are structured JSON with an `error` code, safe `message`, and field
 paths on validation failures: `400 invalid_invoice`, `409` idempotency
-conflicts / pending / reconciliation-required / print-job state, `401` print-agent auth, `422 validation_error`,
+conflicts / pending / reconciliation-required, `422 validation_error`,
 `501 unsupported`, `502` AutoCount rejections (with upstream status) and
 ambiguous writes (`retryable: true`), `500` never leaks internals.
 
@@ -150,11 +141,8 @@ uv pip install -e ".[dev]"        # fastapi, uvicorn, pydantic, httpx, psycopg, 
 | `AUTOCOUNT_API_KEY` | yes | AutoCount Cloud Integration API Key |
 | `AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE` | yes | Enterprise account-book ID |
 | `AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD` | yes | Sdn Bhd account-book ID |
-| `AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE` | no (required for Cloud handoff and office print) | Server-side HTTPS AutoCount Cloud report template with one `{doc_key}` placeholder; keep the account-book path out of source and browser assets |
-| `PRINT_AGENT_TOKEN` | no (required for office print) | Shared secret for the Windows agent's claim/complete routes. Never sent to the iPhone. |
-| `OFFICE_PRINTER_NAME` | no (required for office print) | Exact Windows printer name; the office printer is `EPSONE85FF0 (L6460 Series)` |
-| `PRINT_JOB_CLAIM_LEASE_SECONDS` | no | Seconds a claimed job may stay `printing` before another agent can take it (default `600`) |
-| `INVOICE_REQUESTS_DB` | no | SQLite idempotency/print-job DB path (default `data/invoice_requests.db`) — used only when `POSTGRES_URL`/`DATABASE_URL` is unset |
+| `AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE` | no (required for Cloud handoff) | Server-side HTTPS AutoCount Cloud report template with one `{doc_key}` placeholder; keep the account-book path out of source and browser assets |
+| `INVOICE_REQUESTS_DB` | no | SQLite idempotency DB path (default `data/invoice_requests.db`) — used only when `POSTGRES_URL`/`DATABASE_URL` is unset |
 | `POSTGRES_URL` or `DATABASE_URL` | no (required on Vercel) | Postgres connection string; when set, idempotency storage switches from SQLite to Postgres. Required on serverless hosts (Vercel) where the local filesystem does not persist between invocations |
 
 ### Run the server
@@ -174,13 +162,13 @@ registered as a Custom GPT Action; the Action pins the company to
 `app/static/index.html` is a single-page mobile web app served from `/` —
 company → customer/address → items (qty, price prefilled from price history)
 → review → issue. It calls the same REST API as the Custom GPT Action. After
-issuing, the result screen offers **Print** (queues the official Cloud report
-for the office Epson; the phone never receives the Cloud URL) and **Open Cloud
-Report** (a new-tab deep link to the verified AutoCount Cloud report screen,
-opened with `noopener,noreferrer`). Export PDF and Share are performed in that
-Cloud report screen. The same two actions are on the Recent Invoice detail
-screen. Print and Cloud-report routes are hidden from the Custom GPT schema.
-The account-book path and any credentials live only in the server environment.
+issuing, the result screen offers **Open Cloud Report** (a new-tab deep link
+to the verified AutoCount Cloud report screen, opened with
+`noopener,noreferrer`). Print, Export PDF, and Share are performed in that
+Cloud report screen (then the Epson app for paper). The same Cloud handoff is
+on the Recent Invoice detail screen. The Cloud-report route is hidden from
+the Custom GPT schema. The account-book path and any credentials live only in
+the server environment.
 
 Each issue attempt generates one `crypto.randomUUID()` idempotency key before
 the request and reuses it on retry, so a flaky connection or a second tap
@@ -203,8 +191,6 @@ npx vercel env add AUTOCOUNT_API_KEY production
 npx vercel env add AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE production
 npx vercel env add AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD production
 npx vercel env add AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE production
-npx vercel env add PRINT_AGENT_TOKEN production
-npx vercel env add OFFICE_PRINTER_NAME production
 npx vercel env add POSTGRES_URL production   # required — see below
 npx vercel --prod
 ```
@@ -215,11 +201,10 @@ requests there — duplicate-invoice protection would silently stop working.
 Set `POSTGRES_URL` (Vercel Postgres, or any managed Postgres) before going to
 production; `app/dependencies.py` then uses
 `app/repositories/postgres_request_repository.py` instead of the SQLite
-repository. Print jobs use the same DSN
-(`app/repositories/postgres_print_job_repository.py`). The schema is created
+repository. The schema is created
 automatically on first connection. To
 verify the Postgres path locally before deploying, point `POSTGRES_TEST_DSN`
-at a scratch database and run `pytest tests/unit/test_postgres_request_repository.py tests/unit/test_postgres_print_job_repository.py`.
+at a scratch database and run `pytest tests/unit/test_postgres_request_repository.py`.
 
 ## Documentation
 
@@ -228,4 +213,4 @@ at a scratch database and run `pytest tests/unit/test_postgres_request_repositor
 - [`autocount_mobile_invoice_v1_spec.md`](autocount_mobile_invoice_v1_spec.md) — requirements specification
 - [`autocount_mobile_invoice_v1_plan.md`](autocount_mobile_invoice_v1_plan.md) — implementation plan (Tasks 1–15)
 - [`docs/autocount/pdf-spike.md`](docs/autocount/pdf-spike.md) — official-PDF spike findings
-- [`scripts/README.md`](scripts/README.md) — office Windows print agent (Chrome → EPSONE85FF0 (L6460 Series))
+- [`scripts/README.md`](scripts/README.md) — live AutoCount diagnostic/spike scripts

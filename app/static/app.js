@@ -54,8 +54,6 @@
     editOriginal: [],       // its line set as loaded, sent as expected_lines
     editLines: [],          // the desired line set being built
     saving: false,
-    printPollTimer: null,
-    printJobs: {},          // key company|docNo -> { job_id, status, error_message }
   };
 
   function todayISO() {
@@ -93,13 +91,6 @@
     return body.data;
   }
 
-  async function apiPostEmpty(path) {
-    const res = await fetch(API_BASE + path, { method: "POST" });
-    const body = await safeJson(res);
-    if (!res.ok) throw apiError(body, res.status);
-    return body.data;
-  }
-
   async function apiPut(path, payload) {
     const res = await fetch(API_BASE + path, {
       method: "PUT",
@@ -120,90 +111,6 @@
     err.status = status;
     err.body = body;
     return err;
-  }
-
-  function printJobKey(docNo) {
-    return state.company.key + "|" + docNo;
-  }
-
-  function stopPrintPolling() {
-    if (state.printPollTimer) {
-      clearTimeout(state.printPollTimer);
-      state.printPollTimer = null;
-    }
-  }
-
-  function printStatusLabel(job) {
-    if (!job) return "";
-    if (job.status === "queued") return "Queued — sending to the office printer…";
-    if (job.status === "printing") return "Printing on the office Epson…";
-    if (job.status === "printed") return "Printed on the office Epson.";
-    if (job.status === "failed") {
-      return "Print failed" + (job.error_message ? ": " + job.error_message : ".");
-    }
-    return "Print status: " + job.status;
-  }
-
-  function renderPrintStatus(statusEl, job) {
-    if (!statusEl) return;
-    statusEl.textContent = printStatusLabel(job);
-    statusEl.className = "print-status" + (job && job.status ? " is-" + job.status : "");
-  }
-
-  function wireOfficePrint(btn, statusEl, docNo) {
-    const existing = state.printJobs[printJobKey(docNo)];
-    renderPrintStatus(statusEl, existing);
-    if (existing && (existing.status === "queued" || existing.status === "printing")) {
-      btn.disabled = true;
-      pollPrintJob(docNo, btn, statusEl);
-    }
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
-      try {
-        const job = await apiPostEmpty(
-          "/" + encodeURIComponent(state.company.key) +
-          "/invoices/" + encodeURIComponent(docNo) + "/print"
-        );
-        state.printJobs[printJobKey(docNo)] = job;
-        renderPrintStatus(statusEl, job);
-        pollPrintJob(docNo, btn, statusEl);
-      } catch (e) {
-        btn.disabled = false;
-        renderPrintStatus(statusEl, {
-          status: "failed",
-          error_message: e.message,
-        });
-      }
-    });
-  }
-
-  function pollPrintJob(docNo, btn, statusEl) {
-    stopPrintPolling();
-    const tick = async () => {
-      const current = state.printJobs[printJobKey(docNo)];
-      if (!current || !current.job_id) return;
-      try {
-        const job = await apiGet(
-          "/" + encodeURIComponent(state.company.key) +
-          "/invoices/" + encodeURIComponent(docNo) + "/print/" +
-          encodeURIComponent(current.job_id)
-        );
-        state.printJobs[printJobKey(docNo)] = job;
-        renderPrintStatus(statusEl, job);
-        if (job.status === "queued" || job.status === "printing") {
-          state.printPollTimer = setTimeout(tick, 2000);
-          return;
-        }
-        btn.disabled = false;
-      } catch (e) {
-        btn.disabled = false;
-        renderPrintStatus(statusEl, {
-          status: "failed",
-          error_message: e.message,
-        });
-      }
-    };
-    state.printPollTimer = setTimeout(tick, 2000);
   }
 
   let debounceTimer = null;
@@ -562,10 +469,9 @@
     document.getElementById("invoice-detail-total").textContent = "RM " + money(inv.total);
 
     // The actions block is rendered into the scoped detail container so its
-    // controls never collide with the post-issue result screen's own
-    // Open Cloud Report / Copy number buttons. Cancelled and old invoices keep
-    // Cloud access because it is read-only; only "Edit lines" is gated on
-    // is_editable.
+    // controls never collide with the post-issue result screen. Cancelled and
+    // old invoices keep Cloud access because it is read-only; only "Edit lines"
+    // is gated on is_editable.
     const actionsEl = document.getElementById("invoice-detail-actions");
     let html = inv.is_editable
       ? '<button type="button" class="add-item-btn" id="edit-invoice-btn">Edit lines</button>'
@@ -579,21 +485,13 @@
     // AutoCount docKey; the client only hands over company + doc_no.
     html +=
       '<div class="result-actions detail-cloud-actions">' +
-      '<button type="button" class="btn btn-primary" id="detail-print-office-btn">Print</button>' +
-      '<button type="button" class="btn btn-secondary" id="detail-open-cloud-report-btn">Open Cloud Report</button>' +
-      '<div id="detail-print-status" class="print-status"></div>' +
+      '<button type="button" class="btn btn-primary" id="detail-open-cloud-report-btn">Open Cloud Report</button>' +
       '</div>' +
-      '<div class="status-note">Office Print sends this invoice to the Epson at the office. Export PDF and Share are done in the AutoCount Cloud report screen.</div>';
+      '<div class="status-note">Print, Export PDF, and Share are done in the AutoCount Cloud report screen.</div>';
     actionsEl.innerHTML = html;
 
     const editBtn = document.getElementById("edit-invoice-btn");
     if (editBtn) editBtn.onclick = startEdit;
-
-    wireOfficePrint(
-      document.getElementById("detail-print-office-btn"),
-      document.getElementById("detail-print-status"),
-      inv.doc_no
-    );
 
     document.getElementById("detail-open-cloud-report-btn").onclick = () => {
       const url = "/api/" + encodeURIComponent(state.company.key) +
@@ -1026,17 +924,9 @@
         '<div class="status-detail">Invoice <b>' + escapeHtml(r.invoice_number) + '</b> was created in ' +
         escapeHtml(state.company.name) + '.</div>' +
         '<div class="result-actions">' +
-        '<button class="btn btn-primary" id="print-office-btn">Print</button>' +
-        '<button class="btn btn-secondary" id="open-cloud-report-btn">Open Cloud Report</button>' +
-        '<div id="result-print-status" class="print-status"></div>' +
+        '<button class="btn btn-primary" id="open-cloud-report-btn">Open Cloud Report</button>' +
         '</div>' +
-        '<div class="status-note">Office Print sends this invoice to the Epson at the office. Export PDF and Share are done in the AutoCount Cloud report screen.</div>';
-
-      wireOfficePrint(
-        document.getElementById("print-office-btn"),
-        document.getElementById("result-print-status"),
-        r.invoice_number
-      );
+        '<div class="status-note">Print, Export PDF, and Share are done in the AutoCount Cloud report screen.</div>';
 
       const openBtn = document.getElementById("open-cloud-report-btn");
       openBtn.addEventListener("click", () => {
@@ -1056,7 +946,6 @@
 
   backBtn.addEventListener("click", () => {
     showBanner(null);
-    stopPrintPolling();
     if (state.view) {
       // Unwind the branch one screen at a time; leaving it lands back on the
       // company screen, which is where the branch was entered from.
