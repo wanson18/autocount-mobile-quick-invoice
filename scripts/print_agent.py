@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -116,6 +117,16 @@ def _first(*values: Any) -> str:
 
 def _truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+_CLOUD_URL_RE = re.compile(r"https://\S+", re.IGNORECASE)
+
+
+def redact_secret_urls(text: str) -> str:
+    """Strip https URLs so account-book paths never appear in agent errors."""
+    if not text:
+        return text
+    return _CLOUD_URL_RE.sub("[cloud-report-url]", text)
 
 
 def request_json(
@@ -239,12 +250,20 @@ def print_cloud_report(url: str, printer_name: str, config: AgentConfig) -> None
     ]
     if config.chrome_user_data_dir:
         args.extend(["-UserDataDir", config.chrome_user_data_dir])
-    completed = subprocess.run(args, capture_output=True, text=True, check=False)
+    timeout_seconds = max(int(config.print_wait_seconds), 90) + 120
+    try:
+        completed = subprocess.run(
+            args, capture_output=True, text=True, check=False, timeout=timeout_seconds
+        )
+    except subprocess.TimeoutExpired:
+        raise PrintAgentError(
+            "print_cloud_report.ps1 timed out waiting for the Cloud report to print"
+        ) from None
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip() or (
             f"print_cloud_report.ps1 exited {completed.returncode}"
         )
-        raise PrintAgentError(detail)
+        raise PrintAgentError(redact_secret_urls(detail))
 
 
 def run_once(

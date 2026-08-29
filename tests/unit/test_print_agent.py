@@ -183,8 +183,10 @@ def test_print_script_fails_closed_on_autocount_login_page():
     assert "UIAutomationClient" in source
     assert "Print Report" in source
     assert "Cetak" in source
-    assert "^p" in lowered or "^{p}" in lowered
+    assert "ctrl+p" in lowered or "keybd_event" in source
     assert "Math]::Max($WaitSeconds, 90)" in source or "Math]::Max($WaitSeconds,90)" in source
+    assert "Get-PrintJob" in source
+    assert "GetForegroundWindow" in source
 
 
 def test_print_script_never_logs_cloud_url():
@@ -229,3 +231,21 @@ def test_print_cloud_report_fails_closed_off_windows():
         agent.print_cloud_report(
             JOB["cloud_report_url"], PRINTER, _config()
         )
+
+
+def test_redact_secret_urls_strips_https_cloud_urls():
+    raw = (
+        "Chrome failed https://accounting-report.autocountcloud.com/"
+        "rpt/secret-book/invoice?docKey=1 extra"
+    )
+    redacted = agent.redact_secret_urls(raw)
+    assert "https://" not in redacted
+    assert "secret-book" not in redacted
+    assert "[cloud-report-url]" in redacted
+    assert "extra" in redacted
+
+
+def test_print_cloud_report_subprocess_has_timeout():
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "timeout=" in source
+    assert "TimeoutExpired" in source

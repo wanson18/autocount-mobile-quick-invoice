@@ -71,8 +71,10 @@ pythonw.exe C:\path\to\repo\scripts\print_agent.py
 and put it in `shell:startup`. `pythonw` hides the console; use `python.exe`
 instead if you want a log window.
 
-**Scheduled Task (survives logoff if you pick "Run whether user is logged on
-or not" and store the Cloud login in that user's Chrome profile):**
+**Scheduled Task (must run while the office user is logged on):** headed
+Chrome and Print Report need an interactive desktop. Do **not** pick
+"Run whether user is logged on or not" — that has no UI session for
+Chrome. `ONLOGON` / the Startup folder is the right path:
 
 ```powershell
 $python = (Get-Command python.exe).Source
