@@ -140,9 +140,24 @@ def test_print_script_uses_chrome_and_never_changes_default_printer():
     assert "SetDefaultPrinter" not in source
     assert "$_.Default" not in source
     assert "msedge" not in source.lower()
-    assert "PrintTo" in source
     assert 'InvokeVerbEx("printto", $PrinterName)' in source
-    assert "-PrinterName" in source
+    assert "[string]$PrinterName" in source
+    assert "Get-Printer -Name $PrinterName" in source
+
+
+def test_print_script_inlines_printto_without_nested_advanced_function():
+    """Windows PowerShell 5.1 threw AmbiguousParameterSet on a nested helper
+    with [Parameter()] inside this script (also [Parameter()] on param()).
+    Rename did not fix it. Keep PrintTo inlined and non-advanced.
+    """
+    source = (ROOT / "scripts" / "print_cloud_report.ps1").read_text(encoding="utf-8")
+    assert "[Parameter(" not in source
+    assert "function " not in source
+    assert "System.Diagnostics.ProcessStartInfo" in source
+    assert "UseShellExecute" in source
+    assert 'Verb = "printto"' in source
+    assert "-Verb PrintTo" not in source
+    assert "-Verb PrintTo -ArgumentList" not in source
 
 
 def test_print_cloud_report_fails_closed_off_windows():
