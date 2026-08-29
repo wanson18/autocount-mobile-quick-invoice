@@ -26,8 +26,9 @@ does, after authenticating with `PRINT_AGENT_TOKEN`.
    ```
 
    Sign in, open any invoice report once, then quit Chrome. The Cloud report
-   host needs that session cookie. If prints later fail with a login/PDF
-   error, repeat this step.
+   host needs that session cookie. If the report host later shows **Log In**,
+   prints fail until this login is done again. Do not skip opening a report
+   once — that is what proves the session can reach the invoice printout.
 
 Leave that profile window **closed** while the agent runs; Chrome will not
 share a locked user-data directory.
@@ -85,15 +86,22 @@ should have permission to print.
 ## How it prints
 
 The agent does **not** call an AutoCount PDF API (there isn't one) and does
-not scrape Cloud HTML. It:
+not scrape Cloud HTML into a homemade invoice. It prints the official
+AutoCount Cloud report the way a person does:
 
 1. `POST /api/print-agent/jobs/next` with `Authorization: Bearer …`
 2. Receives the server-resolved Cloud report HTTPS URL
-3. Has Chrome at `C:\Program Files\Google\Chrome\Application\chrome.exe`
-   render that official report to a temporary PDF
-4. Sends the PDF to `EPSONE85FF0 (L6460 Series)` with Windows `PrintTo` /
-   `printto` using that exact name (never the Windows default printer)
+3. Opens **headed** Google Chrome at
+   `C:\Program Files\Google\Chrome\Application\chrome.exe` with the office
+   Cloud login (the print-agent profile). It waits until the Cloud report
+   is showing — not the AutoCount **Log In** page.
+4. Clicks AutoCount **Print Report** in the report viewer, then prints that
+   printout to **EPSONE85FF0 (L6460 Series)** by that exact printer name
+   (never the Windows default printer). Chrome kiosk-printing plus sticky
+   print settings target that named Epson; a Windows Print dialog, if one
+   appears, is accepted only when that same printer is selected.
 5. `POST /api/print-agent/jobs/{id}/complete` with `printed` or `failed`
 
-If the Cloud session has expired, the job fails and the iPhone shows the
-error. Log into AutoCount Cloud in the print-agent Chrome profile again.
+If the report host shows **Log In**, the job fails and the iPhone shows the
+error. Repeat the one-time Chrome profile login above, open any invoice
+report once, then close Chrome. A login page is never sent to the Epson.

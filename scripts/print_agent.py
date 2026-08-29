@@ -1,10 +1,10 @@
 """Office Windows print agent.
 
 Polls the live API, claims a queued invoice print job, opens the official
-AutoCount Cloud report in Google Chrome using the office PC's Cloud login,
-and sends it to printer ``EPSONE85FF0 (L6460 Series)`` by that exact name.
-Configure via environment variables or a gitignored ``print-agent.local.json``
-next to this script.
+AutoCount Cloud report in headed Google Chrome using the office PC's Cloud
+login, clicks Print Report, and sends that printout to printer
+``EPSONE85FF0 (L6460 Series)`` by that exact name. Configure via environment
+variables or a gitignored ``print-agent.local.json`` next to this script.
 
 The Cloud report URL is received only after claiming a job with
 ``PRINT_AGENT_TOKEN``. It is never logged (the account-book path lives in
@@ -28,7 +28,7 @@ from typing import Any, Callable
 DEFAULT_PRINTER_NAME = "EPSONE85FF0 (L6460 Series)"
 DEFAULT_API_BASE = "https://autocount-mobile-quick-invoice.vercel.app"
 DEFAULT_POLL_INTERVAL = 3.0
-DEFAULT_PRINT_WAIT_SECONDS = 30
+DEFAULT_PRINT_WAIT_SECONDS = 90
 CONFIG_FILENAME = "print-agent.local.json"
 
 
@@ -209,10 +209,10 @@ def handle_claimed_job(
 def print_cloud_report(url: str, printer_name: str, config: AgentConfig) -> None:
     """Print the official Cloud report on Windows to the named Epson.
 
-    Opens the Cloud URL in Chrome with a dedicated profile (so the office
-    AutoCount Cloud login can persist) and sends that page to the printer
-    named exactly ``printer_name``. An intermediate PDF is only Chrome's
-    rendering of the official Cloud report — not a homemade invoice layout.
+    Opens the Cloud URL in headed Google Chrome with a dedicated profile
+    (so the office AutoCount Cloud login can persist), waits until the
+    Cloud report is showing (not the login page), clicks AutoCount Print Report,
+    and prints that printout to the printer named exactly ``printer_name``.
     The Windows default printer is never read or changed.
     """
     if sys.platform != "win32":

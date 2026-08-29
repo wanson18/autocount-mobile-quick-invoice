@@ -1,21 +1,25 @@
 # Print the official AutoCount Cloud invoice report to a named Windows printer.
 #
-# This does not rebuild the invoice. Chrome opens the Cloud report URL (the
-# same report the mobile "Open Cloud Report" button uses) with a dedicated
-# profile so the office AutoCount Cloud login can persist, writes that page
-# to a temporary PDF, then sends the PDF to the named Epson.
+# This does not rebuild the invoice. Headed Google Chrome opens the Cloud
+# report URL (the same report the mobile "Open Cloud Report" button uses)
+# with a dedicated profile so the office AutoCount Cloud login can persist.
+# After the generated report is showing (not the AutoCount login page), the
+# script clicks AutoCount Print Report and prints that printout to the named
+# Epson. A headed Chrome window is required; dumping the Cloud URL to PDF
+# printed the AutoCount login page and is not used.
 #
 # The Windows default printer is never read or changed. Jobs always go to
 # the exact printer name passed in (office printer: EPSONE85FF0 (L6460 Series)).
+# The Cloud report URL is never logged (the account-book path lives in it).
 #
 # One-time setup: start Chrome with this profile, log into AutoCount Cloud,
-# then close Chrome before running the agent:
+# open any invoice report once, then close Chrome before running the agent:
 #   "C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir="%LOCALAPPDATA%\AutocountPrintAgent\ChromeProfile"
-
+#
 # Keep this a simple script: no Parameter attributes and no CmdletBinding.
 # A nested advanced helper inside an advanced script caused Windows
-# PowerShell 5.1 AmbiguousParameterSet at the helper call site; renaming
-# the helper did not fix it.
+# PowerShell 5.1 AmbiguousParameterSet at the helper call site. Helpers below
+# use a plain param list with no Parameter attributes and no CmdletBinding.
 
 param(
     [string]$Url,
@@ -64,39 +68,490 @@ New-Item -ItemType Directory -Force -Path $UserDataDir | Out-Null
 
 $workDir = Join-Path $env:TEMP "AutocountPrintAgent"
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
-$pdfPath = Join-Path $workDir ("invoice-" + [guid]::NewGuid().ToString() + ".pdf")
 
-$chromeArgs = @(
-    "--headless=new",
-    "--disable-gpu",
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--no-pdf-header-footer",
-    "--virtual-time-budget=20000",
-    "--timeout=30000",
-    "--user-data-dir=$UserDataDir",
-    "--print-to-pdf=$pdfPath",
-    $Url
-)
+# Default Chrome profile path we must never stop: %LOCALAPPDATA%\Google\Chrome\User Data
+$defaultChromeUserData = Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data"
 
-$proc = Start-Process -FilePath $chrome -ArgumentList $chromeArgs -PassThru -Wait
-if ($proc.ExitCode -ne 0) {
-    throw "Chrome print-to-pdf failed with exit code $($proc.ExitCode). Log into AutoCount Cloud in the print-agent Chrome profile and try again."
+function Get-JsonEscaped($value) {
+    if ($null -eq $value) { return "" }
+    $text = [string]$value
+    $text = $text.Replace('\', '\\')
+    $text = $text.Replace('"', '\"')
+    $text = $text.Replace("`r", '\r')
+    $text = $text.Replace("`n", '\n')
+    $text = $text.Replace("`t", '\t')
+    return $text
 }
 
-$deadline = (Get-Date).AddSeconds([Math]::Max($WaitSeconds, 5))
-while (-not (Test-Path -LiteralPath $pdfPath) -and (Get-Date) -lt $deadline) {
+function Get-ChromeProcessRows {
+    try {
+        return @(Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction Stop)
+    } catch {
+        return @(Get-WmiObject Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction SilentlyContinue)
+    }
+}
+
+function Get-ProfileChromePids($profileDir) {
+    $resolved = [string]$profileDir
+    try {
+        $resolved = [System.IO.Path]::GetFullPath($profileDir)
+    } catch {
+        $resolved = [string]$profileDir
+    }
+    $resolved = $resolved.TrimEnd('\')
+    $resolvedLower = $resolved.ToLowerInvariant()
+    $defaultLower = $defaultChromeUserData.TrimEnd('\').ToLowerInvariant()
+    $pids = @()
+    foreach ($proc in (Get-ChromeProcessRows)) {
+        $cmd = [string]$proc.CommandLine
+        if (-not $cmd) { continue }
+        if ($cmd -notmatch '--user-data-dir') { continue }
+        $cmdLower = $cmd.ToLowerInvariant()
+        # Never stop the user's normal Chrome (the default User Data profile).
+        if ($cmdLower.Contains($defaultLower) -and $resolvedLower -ne $defaultLower) {
+            continue
+        }
+        if ($cmdLower.Contains($resolvedLower)) {
+            $pids += [int]$proc.ProcessId
+        }
+    }
+    return $pids
+}
+
+function Stop-ProfileChrome($profileDir) {
+    foreach ($pid in @(Get-ProfileChromePids $profileDir)) {
+        Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+    }
+    $deadline = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $deadline) {
+        $left = @(Get-ProfileChromePids $profileDir)
+        if ($left.Count -eq 0) { return }
+        Start-Sleep -Milliseconds 250
+    }
+}
+
+function Get-OrCreateDict($parent, $key) {
+    if ($null -eq $parent) {
+        return $null
+    }
+    $missing = $true
+    if ($parent -is [System.Collections.IDictionary]) {
+        $missing = -not $parent.Contains($key)
+    }
+    if ($missing -or $null -eq $parent[$key] -or $parent[$key] -isnot [System.Collections.IDictionary]) {
+        $parent[$key] = New-Object 'System.Collections.Generic.Dictionary[string,object]'
+    }
+    return $parent[$key]
+}
+
+function Set-ChromePrintPrefs($profileDir, $namedPrinter, $downloadDir) {
+    $defaultDir = Join-Path $profileDir "Default"
+    New-Item -ItemType Directory -Force -Path $defaultDir | Out-Null
+    $prefsPath = Join-Path $defaultDir "Preferences"
+    Add-Type -AssemblyName System.Web.Extensions
+    $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+    $serializer.MaxJsonLength = [int]::MaxValue
+    $serializer.RecursionLimit = 100
+    $prefs = $null
+    if (Test-Path -LiteralPath $prefsPath) {
+        $raw = [System.IO.File]::ReadAllText($prefsPath)
+        if ($raw -and $raw.Trim().Length -gt 0) {
+            $prefs = $serializer.DeserializeObject($raw)
+        }
+    }
+    if ($null -eq $prefs) {
+        $prefs = New-Object 'System.Collections.Generic.Dictionary[string,object]'
+    }
+    $escaped = Get-JsonEscaped $namedPrinter
+    $appState = '{"recentDestinations":[{"id":"' + $escaped + '","origin":"local","account":"","displayName":"' + $escaped + '"}],"selectedDestinationId":"' + $escaped + '","version":2,"isHeaderFooterEnabled":false}'
+    $printing = Get-OrCreateDict $prefs "printing"
+    $sticky = Get-OrCreateDict $printing "print_preview_sticky_settings"
+    $sticky["appState"] = $appState
+    $download = Get-OrCreateDict $prefs "download"
+    $download["default_directory"] = $downloadDir
+    $download["prompt_for_download"] = $false
+    $savefile = Get-OrCreateDict $prefs "savefile"
+    $savefile["default_directory"] = $downloadDir
+    $profile = Get-OrCreateDict $prefs "profile"
+    $profile["exit_type"] = "Normal"
+    $profile["exited_cleanly"] = $true
+    $json = $serializer.Serialize($prefs)
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $written = $false
+    foreach ($tryWrite in 1..6) {
+        try {
+            [System.IO.File]::WriteAllText($prefsPath, $json, $utf8)
+            $written = $true
+            break
+        } catch {
+            Start-Sleep -Milliseconds 400
+        }
+    }
+    if (-not $written) {
+        throw "Could not update Chrome print preferences for printer '$namedPrinter'."
+    }
+}
+
+function Ensure-Win32Helper {
+    if ("AutocountPrintWin32" -as [type]) { return }
+    Add-Type -TypeDefinition @"
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public class AutocountPrintWin32 {
+    public class WindowInfo {
+        public long Hwnd;
+        public uint Pid;
+        public string Title;
+    }
+
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    private static List<WindowInfo> _windows;
+
+    private static bool EnumCallback(IntPtr hWnd, IntPtr lParam) {
+        if (!IsWindowVisible(hWnd)) return true;
+        uint pid;
+        GetWindowThreadProcessId(hWnd, out pid);
+        StringBuilder sb = new StringBuilder(1024);
+        GetWindowText(hWnd, sb, sb.Capacity);
+        string title = sb.ToString();
+        if (string.IsNullOrWhiteSpace(title)) return true;
+        WindowInfo info = new WindowInfo();
+        info.Hwnd = hWnd.ToInt64();
+        info.Pid = pid;
+        info.Title = title;
+        _windows.Add(info);
+        return true;
+    }
+
+    public static List<WindowInfo> GetVisibleWindows() {
+        _windows = new List<WindowInfo>();
+        EnumWindows(EnumCallback, IntPtr.Zero);
+        return _windows;
+    }
+}
+"@
+}
+
+function Get-ProfileChromeWindows($profileDir) {
+    Ensure-Win32Helper
+    $pidSet = @{}
+    foreach ($pid in @(Get-ProfileChromePids $profileDir)) {
+        $pidSet[[int]$pid] = $true
+    }
+    $matches = @()
+    if ($pidSet.Count -eq 0) { return $matches }
+    foreach ($win in [AutocountPrintWin32]::GetVisibleWindows()) {
+        if ($pidSet.ContainsKey([int]$win.Pid)) {
+            $matches += $win
+        }
+    }
+    return $matches
+}
+
+function Test-LoginWindowTitle($title) {
+    if (-not $title) { return $false }
+    $t = $title.ToLowerInvariant()
+    if ($t -match 'log\s*in') { return $true }
+    if ($t -match 'sign\s*in') { return $true }
+    if ($t -match '(^|[\s\|\-])login([\s\|\-]|$)') { return $true }
+    return $false
+}
+
+function Test-ReadyReportTitle($title) {
+    if (-not $title) { return $false }
+    if (Test-LoginWindowTitle $title) { return $false }
+    $t = $title.ToLowerInvariant()
+    if ($t -eq 'google chrome') { return $false }
+    if ($t -match 'new tab') { return $false }
+    if ($t -match 'untitled') { return $false }
+    if ($t -match 'about:blank') { return $false }
+    return $true
+}
+
+function Wait-ForCloudReportWindow($profileDir, $timeoutSeconds) {
+    $deadline = (Get-Date).AddSeconds($timeoutSeconds)
+    $sawLogin = $false
+    $ready = $null
+    while ((Get-Date) -lt $deadline) {
+        foreach ($win in @(Get-ProfileChromeWindows $profileDir)) {
+            $title = [string]$win.Title
+            if (Test-LoginWindowTitle $title) {
+                $sawLogin = $true
+                continue
+            }
+            if (Test-ReadyReportTitle $title) {
+                $ready = $win
+                break
+            }
+        }
+        if ($ready) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    if ($ready) {
+        return $ready
+    }
+    if ($sawLogin) {
+        throw "Cloud report is still the AutoCount login page (Log In). Log into AutoCount Cloud in the print-agent Chrome profile, open any invoice report once, then close Chrome."
+    }
+    $titles = @()
+    foreach ($win in @(Get-ProfileChromeWindows $profileDir)) {
+        $titles += [string]$win.Title
+    }
+    if ($titles.Count -gt 0 -and ($titles | Where-Object { Test-LoginWindowTitle $_ })) {
+        throw "Cloud report is still the AutoCount login page (Log In). Log into AutoCount Cloud in the print-agent Chrome profile, open any invoice report once, then close Chrome."
+    }
+    throw "Chrome did not show the generated Cloud report in time. Confirm the print-agent Chrome profile is logged into AutoCount Cloud."
+}
+
+function Get-UiaElementByName($root, $name) {
+    if ($null -eq $root -or -not $name) { return $null }
+    try {
+        $cond = New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::NameProperty,
+            $name)
+        return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
+    } catch {
+        return $null
+    }
+}
+
+function Get-ControlTextBlob($el) {
+    $name = ""
+    $help = ""
+    try { $name = [string]$el.Current.Name } catch { $name = "" }
+    try { $help = [string]$el.Current.HelpText } catch { $help = "" }
+    return ($name + " " + $help)
+}
+
+function Find-PrintReportControl($root) {
+    if ($null -eq $root) { return $null }
+    $exact = Get-UiaElementByName $root "Print Report"
+    if ($exact) { return $exact }
+    $printButton = $null
+    $cetak = Get-UiaElementByName $root "Cetak"
+    $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+    $queue = New-Object System.Collections.Queue
+    $queue.Enqueue($root)
+    $visited = 0
+    while ($queue.Count -gt 0 -and $visited -lt 12000) {
+        $el = $queue.Dequeue()
+        $visited++
+        try {
+            $blob = Get-ControlTextBlob $el
+            $type = $el.Current.ControlType
+            if ($blob -match 'Print Report') {
+                return $el
+            }
+            if (-not $cetak -and $blob -match 'Cetak') {
+                $cetak = $el
+            }
+            $name = ""
+            try { $name = [string]$el.Current.Name } catch { $name = "" }
+            if (-not $printButton -and $type -eq [System.Windows.Automation.ControlType]::Button -and $name -replace '&','' -match '^\s*Print\s*$') {
+                $printButton = $el
+            }
+        } catch {
+        }
+        try {
+            $child = $walker.GetFirstChild($el)
+            while ($child) {
+                $queue.Enqueue($child)
+                $child = $walker.GetNextSibling($child)
+            }
+        } catch {
+        }
+    }
+    if ($printButton) { return $printButton }
+    if ($cetak) { return $cetak }
+    return $null
+}
+
+function Invoke-UiaControl($el) {
+    if ($null -eq $el) { return $false }
+    try {
+        $pattern = $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+        $pattern.Invoke()
+        return $true
+    } catch {
+    }
+    try {
+        $legacy = $el.GetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern)
+        $legacy.DoDefaultAction()
+        return $true
+    } catch {
+    }
+    return $false
+}
+
+function Find-PrintDialogWindow {
+    $root = [System.Windows.Automation.AutomationElement]::RootElement
+    $windows = $root.FindAll(
+        [System.Windows.Automation.TreeScope]::Children,
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Window)))
+    foreach ($w in $windows) {
+        $n = ""
+        try { $n = [string]$w.Current.Name } catch { $n = "" }
+        if ($n -eq "Print" -or $n -eq "Print Report" -or $n -eq "Cetak") {
+            return $w
+        }
+        if ($n -like "Print *" -and $n -notlike "*Google Chrome*") {
+            return $w
+        }
+    }
+    return $null
+}
+
+function Get-SelectedPrinterFromDialog($dialog) {
+    if ($null -eq $dialog) { return "" }
+    $combos = $dialog.FindAll(
+        [System.Windows.Automation.TreeScope]::Descendants,
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::ComboBox)))
+    foreach ($c in $combos) {
+        $val = ""
+        try {
+            $vp = $c.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+            $val = [string]$vp.Current.Value
+        } catch {
+            try { $val = [string]$c.Current.Name } catch { $val = "" }
+        }
+        if ($val) { return $val }
+    }
+    $items = $dialog.FindAll(
+        [System.Windows.Automation.TreeScope]::Descendants,
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::ListItem)))
+    foreach ($item in $items) {
+        try {
+            $sp = $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+            if ($sp.Current.IsSelected) {
+                return [string]$item.Current.Name
+            }
+        } catch {
+        }
+    }
+    return ""
+}
+
+function Select-PrinterInDialog($dialog, $namedPrinter) {
+    if ($null -eq $dialog) { return $false }
+    $items = $dialog.FindAll(
+        [System.Windows.Automation.TreeScope]::Descendants,
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::ListItem)))
+    foreach ($item in $items) {
+        $name = ""
+        try { $name = [string]$item.Current.Name } catch { $name = "" }
+        if ($name -eq $namedPrinter) {
+            try {
+                $sp = $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+                $sp.Select()
+                return $true
+            } catch {
+            }
+        }
+    }
+    $combos = $dialog.FindAll(
+        [System.Windows.Automation.TreeScope]::Descendants,
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::ComboBox)))
+    foreach ($c in $combos) {
+        try {
+            $vp = $c.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+            $vp.SetValue($namedPrinter)
+            return $true
+        } catch {
+        }
+    }
+    return $false
+}
+
+function Confirm-PrintDialogForNamedPrinter($namedPrinter, $waitSeconds) {
+    $deadline = (Get-Date).AddSeconds($waitSeconds)
+    $dialog = $null
+    while ((Get-Date) -lt $deadline) {
+        $dialog = Find-PrintDialogWindow
+        if ($dialog) { break }
+        Start-Sleep -Milliseconds 400
+    }
+    if (-not $dialog) { return $false }
+    $selected = Get-SelectedPrinterFromDialog $dialog
+    if ($selected -ne $namedPrinter) {
+        Select-PrinterInDialog $dialog $namedPrinter | Out-Null
+        Start-Sleep -Milliseconds 400
+        $selected = Get-SelectedPrinterFromDialog $dialog
+    }
+    if ($selected -ne $namedPrinter) {
+        throw "Print dialog is not set to printer '$namedPrinter' (it was '$selected'). The agent never prints to a different printer and never uses the Windows default printer."
+    }
+    $printBtn = $null
+    $buttons = $dialog.FindAll(
+        [System.Windows.Automation.TreeScope]::Descendants,
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Button)))
+    foreach ($btn in $buttons) {
+        $n = ""
+        try { $n = ([string]$btn.Current.Name).Replace("&", "") } catch { $n = "" }
+        if ($n -eq "Print" -or $n -eq "Cetak") {
+            $printBtn = $btn
+            break
+        }
+    }
+    if (-not $printBtn) {
+        throw "Print dialog for '$namedPrinter' has no Print button."
+    }
+    if (-not (Invoke-UiaControl $printBtn)) {
+        throw "Could not click Print on the dialog for printer '$namedPrinter'."
+    }
+    return $true
+}
+
+function Send-CtrlPToWindow($hwnd) {
+    Ensure-Win32Helper
+    $ptr = [IntPtr]$hwnd
+    [AutocountPrintWin32]::ShowWindow($ptr, 9) | Out-Null
+    [AutocountPrintWin32]::SetForegroundWindow($ptr) | Out-Null
     Start-Sleep -Milliseconds 400
-}
-if (-not (Test-Path -LiteralPath $pdfPath) -or (Get-Item -LiteralPath $pdfPath).Length -lt 100) {
-    throw "Chrome did not write a Cloud report PDF. Confirm the print-agent Chrome profile is logged into AutoCount Cloud."
+    $wshell = New-Object -ComObject WScript.Shell
+    $wshell.SendKeys("^p")
 }
 
-try {
+function Send-PdfToNamedPrinter($pdfPath, $PrinterName) {
     # FolderItem.InvokeVerbEx("printto", name) targets that printer without
     # touching the Windows default. ProcessStartInfo printto is the fallback
     # if the shell verb is missing on the COM object. Never combine
     # Start-Process -Verb with -ArgumentList (different 5.1 parameter sets).
+    # Only used when AutoCount/Chrome exported a real report PDF after login
+    # and Print Report — never a headless dump of the login page.
     $sentToPrinter = $false
     $folderPath = Split-Path -LiteralPath $pdfPath
     $fileName = Split-Path -LiteralPath $pdfPath -Leaf
@@ -111,7 +566,6 @@ try {
             # Fall through to ProcessStartInfo printto, still with the exact name.
         }
     }
-
     if (-not $sentToPrinter) {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = $pdfPath
@@ -127,7 +581,111 @@ try {
             throw "Windows could not printto printer '$PrinterName'. The agent never uses the Windows default printer."
         }
     }
+}
+
+function Get-NewPdfFiles($folders, $since) {
+    $found = @()
+    foreach ($dir in $folders) {
+        if (-not $dir) { continue }
+        if (-not (Test-Path -LiteralPath $dir)) { continue }
+        Get-ChildItem -LiteralPath $dir -Filter *.pdf -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($_.LastWriteTime -ge $since -and $_.Length -ge 100) {
+                $found += $_
+            }
+        }
+    }
+    return $found
+}
+
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+
+Stop-ProfileChrome $UserDataDir
+Set-ChromePrintPrefs $UserDataDir $PrinterName $workDir
+
+$chromePsi = New-Object System.Diagnostics.ProcessStartInfo
+$chromePsi.FileName = $chrome
+$chromePsi.UseShellExecute = $false
+# Headed Chrome only (no headless PDF dump of the Cloud URL).
+# --force-renderer-accessibility exposes AutoCount Print Report to UI Automation.
+# --hide-crash-restore-bubble avoids a restore prompt after leftover profile Chrome was stopped.
+$chromePsi.Arguments = (
+    '--user-data-dir="{0}" --kiosk-printing --no-first-run --no-default-browser-check --start-maximized --force-renderer-accessibility --hide-crash-restore-bubble "{1}"' -f $UserDataDir, $Url
+)
+$chromeProc = [System.Diagnostics.Process]::Start($chromePsi)
+if (-not $chromeProc) {
+    throw "Google Chrome did not start for the print-agent profile."
+}
+
+try {
+    $waitForReport = [Math]::Max($WaitSeconds, 90)
+    $reportWindow = Wait-ForCloudReportWindow $UserDataDir $waitForReport
+    if (Test-LoginWindowTitle $reportWindow.Title) {
+        throw "Cloud report is still the AutoCount login page (Log In). Log into AutoCount Cloud in the print-agent Chrome profile, open any invoice report once, then close Chrome."
+    }
+
+    Start-Sleep -Seconds 3
+    $chromeEl = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$reportWindow.Hwnd)
+    $printControl = $null
+    $findDeadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $findDeadline) {
+        if (Test-LoginWindowTitle $reportWindow.Title) {
+            throw "Cloud report is still the AutoCount login page (Log In). Refusing to click Print."
+        }
+        $printControl = Find-PrintReportControl $chromeEl
+        if ($printControl) { break }
+        Start-Sleep -Milliseconds 500
+        $latest = @(Get-ProfileChromeWindows $UserDataDir) | Select-Object -First 1
+        if ($latest) {
+            $reportWindow = $latest
+            if (Test-LoginWindowTitle $reportWindow.Title) {
+                throw "Cloud report is still the AutoCount login page (Log In). Refusing to click Print."
+            }
+            $chromeEl = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$reportWindow.Hwnd)
+        }
+    }
+
+    $pdfWatchStart = (Get-Date).AddSeconds(-1)
+    $usedPrintReport = $false
+    if ($printControl) {
+        Ensure-Win32Helper
+        [AutocountPrintWin32]::SetForegroundWindow([IntPtr]$reportWindow.Hwnd) | Out-Null
+        Start-Sleep -Milliseconds 300
+        if (Invoke-UiaControl $printControl) {
+            $usedPrintReport = $true
+        }
+    }
+
+    if (-not $usedPrintReport) {
+        if (Test-LoginWindowTitle $reportWindow.Title) {
+            throw "Cloud report is still the AutoCount login page (Log In). Refusing to send Ctrl+P."
+        }
+        Send-CtrlPToWindow $reportWindow.Hwnd
+    }
+
+    $printedViaDialog = $false
+    try {
+        $printedViaDialog = Confirm-PrintDialogForNamedPrinter $PrinterName 8
+    } catch {
+        throw
+    }
+
+    $watchFolders = @(
+        $workDir,
+        (Join-Path $UserDataDir "Default\Downloads")
+    )
+    $pdfDeadline = (Get-Date).AddSeconds(8)
+    $exported = @()
+    while ((Get-Date) -lt $pdfDeadline) {
+        $exported = @(Get-NewPdfFiles $watchFolders $pdfWatchStart)
+        if ($exported.Count -gt 0) { break }
+        Start-Sleep -Milliseconds 400
+    }
+    if (-not $printedViaDialog -and $exported.Count -gt 0) {
+        Send-PdfToNamedPrinter $exported[0].FullName $PrinterName
+    }
+
+    Start-Sleep -Seconds 6
 } finally {
-    Start-Sleep -Seconds 2
-    Remove-Item -LiteralPath $pdfPath -Force -ErrorAction SilentlyContinue
+    Stop-ProfileChrome $UserDataDir
 }

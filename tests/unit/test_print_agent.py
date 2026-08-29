@@ -134,8 +134,12 @@ def test_load_config_reads_chrome_profile_dir(tmp_path):
     assert config.chrome_user_data_dir == r"C:\Profiles\ChromePrint"
 
 
+def _print_script_source():
+    return (ROOT / "scripts" / "print_cloud_report.ps1").read_text(encoding="utf-8")
+
+
 def test_print_script_uses_chrome_and_never_changes_default_printer():
-    source = (ROOT / "scripts" / "print_cloud_report.ps1").read_text(encoding="utf-8")
+    source = _print_script_source()
     assert r"C:\Program Files\Google\Chrome\Application\chrome.exe" in source
     assert "SetDefaultPrinter" not in source
     assert "$_.Default" not in source
@@ -145,19 +149,79 @@ def test_print_script_uses_chrome_and_never_changes_default_printer():
     assert "Get-Printer -Name $PrinterName" in source
 
 
-def test_print_script_inlines_printto_without_nested_advanced_function():
+def test_print_script_helpers_are_not_advanced_functions():
     """Windows PowerShell 5.1 threw AmbiguousParameterSet on a nested helper
     with [Parameter()] inside this script (also [Parameter()] on param()).
-    Rename did not fix it. Keep PrintTo inlined and non-advanced.
+    Helpers may exist but must stay non-advanced. Never combine Start-Process
+    -Verb with -ArgumentList.
     """
-    source = (ROOT / "scripts" / "print_cloud_report.ps1").read_text(encoding="utf-8")
+    source = _print_script_source()
     assert "[Parameter(" not in source
-    assert "function " not in source
+    assert "[CmdletBinding" not in source
     assert "System.Diagnostics.ProcessStartInfo" in source
     assert "UseShellExecute" in source
     assert 'Verb = "printto"' in source
     assert "-Verb PrintTo" not in source
     assert "-Verb PrintTo -ArgumentList" not in source
+
+
+def test_print_script_opens_headed_chrome_not_headless_pdf():
+    source = _print_script_source()
+    assert "--headless" not in source
+    assert "--print-to-pdf" not in source
+    assert "--kiosk-printing" in source
+    assert "--no-first-run" in source
+    assert "--no-default-browser-check" in source
+    assert "--start-maximized" in source
+    assert "--user-data-dir" in source
+
+
+def test_print_script_fails_closed_on_autocount_login_page():
+    source = _print_script_source()
+    lowered = source.lower()
+    assert "log in" in lowered
+    assert "UIAutomationClient" in source
+    assert "Print Report" in source
+    assert "Cetak" in source
+    assert "^p" in lowered or "^{p}" in lowered
+    assert "Math]::Max($WaitSeconds, 90)" in source or "Math]::Max($WaitSeconds,90)" in source
+
+
+def test_print_script_never_logs_cloud_url():
+    source = _print_script_source()
+    assert "Write-Host $Url" not in source
+    assert "Write-Output $Url" not in source
+    assert "Write-Verbose $Url" not in source
+    assert "Write-Error $Url" not in source
+
+
+def test_print_script_merges_named_printer_into_chrome_prefs():
+    source = _print_script_source()
+    assert "isHeaderFooterEnabled" in source
+    assert '"origin":"local"' in source or '"origin": "local"' in source
+    assert "Preferences" in source
+    assert "ConvertFrom-Json" in source or "JavaScriptSerializer" in source
+
+
+def test_print_script_stops_only_profile_chrome_not_default_user_data():
+    source = _print_script_source()
+    assert "--user-data-dir" in source
+    assert r"Google\Chrome\User Data" in source
+    assert "Stop-Process" in source
+
+
+def test_print_cloud_report_docstring_describes_headed_print_report():
+    doc = agent.print_cloud_report.__doc__ or ""
+    lowered = doc.lower()
+    assert "print report" in lowered
+    assert "headless" not in lowered
+    assert "print-to-pdf" not in lowered
+
+
+def test_default_print_wait_covers_sso_and_report_render():
+    assert agent.DEFAULT_PRINT_WAIT_SECONDS >= 90
+    config = _config()
+    assert config.print_wait_seconds >= 90
 
 
 def test_print_cloud_report_fails_closed_off_windows():
