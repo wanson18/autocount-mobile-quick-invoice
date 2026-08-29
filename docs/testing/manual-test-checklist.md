@@ -81,7 +81,18 @@ first attempt; the next attempt with the **same** key either completes the
 invoice (one match in the listing) or returns a reconciliation message — it
 never creates a second invoice.
 
-## 7. After local acceptance — deploy the GPT Action
+## 7. Office print (optional, needs the Windows agent)
+
+| Check | Expected |
+|---|---|
+| Tap **Print** on the post-issue screen | Status moves queued → printing → printed (or failed with a readable message). No Cloud URL appears in the page or in DevTools JSON. |
+| Tap **Print** on a Recent invoice | Same status machine; invoice is unchanged in AutoCount. |
+| Agent not running | Phone stays on queued until the agent claims, or shows failed if enqueue config is missing (`501`). |
+| `/openapi.json` | No `/print` or `/print-agent` paths. |
+
+Full agent setup is in [`scripts/README.md`](../scripts/README.md). The office printer name is exactly `EPSONE85FF0 (L6460 Series)`.
+
+## 8. After local acceptance — deploy the GPT Action
 
 1. Host the API on HTTPS with a valid certificate (required by Custom GPT
    Actions) and set the four env vars in the hosting environment.
