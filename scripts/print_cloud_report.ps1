@@ -141,14 +141,18 @@ function Get-OrCreateDict($parent, $key) {
     if ($null -eq $parent) {
         return $null
     }
-    $missing = $true
-    if ($parent -is [System.Collections.IDictionary]) {
-        $missing = -not $parent.Contains($key)
+    $current = $null
+    try {
+        $current = $parent[$key]
+    } catch {
+        $current = $null
     }
-    if ($missing -or $null -eq $parent[$key] -or $parent[$key] -isnot [System.Collections.IDictionary]) {
-        $parent[$key] = New-Object 'System.Collections.Generic.Dictionary[string,object]'
+    if ($current -is [System.Collections.IDictionary]) {
+        return $current
     }
-    return $parent[$key]
+    $created = New-Object System.Collections.Hashtable
+    $parent[$key] = $created
+    return $created
 }
 
 function Set-ChromePrintPrefs($profileDir, $namedPrinter, $downloadDir) {
@@ -167,7 +171,7 @@ function Set-ChromePrintPrefs($profileDir, $namedPrinter, $downloadDir) {
         }
     }
     if ($null -eq $prefs) {
-        $prefs = New-Object 'System.Collections.Generic.Dictionary[string,object]'
+        $prefs = New-Object System.Collections.Hashtable
     }
     $escaped = Get-JsonEscaped $namedPrinter
     $appState = '{"recentDestinations":[{"id":"' + $escaped + '","origin":"local","account":"","displayName":"' + $escaped + '"}],"selectedDestinationId":"' + $escaped + '","version":2,"isHeaderFooterEnabled":false}'

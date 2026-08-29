@@ -165,6 +165,17 @@ def test_print_script_helpers_are_not_advanced_functions():
     assert "-Verb PrintTo -ArgumentList" not in source
 
 
+def test_print_script_does_not_call_dictionary_contains():
+    """PS 5.1 binds Dictionary[string,object].Contains($key) to
+    ICollection<KeyValuePair>.Contains, which needs a KeyValuePair, not a
+    string. The live office agent failed at Get-OrCreateDict before Chrome
+    opened. Use the indexer instead; -contains is fine.
+    """
+    source = _print_script_source()
+    assert "$parent.Contains(" not in source
+    assert ".Contains($key)" not in source
+
+
 def test_print_script_opens_headed_chrome_not_headless_pdf():
     source = _print_script_source()
     assert "--headless" not in source
