@@ -27,13 +27,9 @@ does, after authenticating with `PRINT_AGENT_TOKEN`.
    "C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir="%LOCALAPPDATA%\AutocountPrintAgent\ChromeProfile"
    ```
 
-   Sign in, open any invoice report once, then quit Chrome. The Cloud report
-   host needs that session cookie. If the report host later shows **Log In**,
-   prints fail until this login is done again. Do not skip opening a report
-   once — that is what proves the session can reach the invoice printout.
-
-Leave that profile window **closed** while the agent runs; Chrome will not
-share a locked user-data directory.
+   Sign in at **https://accounting.autocountcloud.com/** in that profile.
+   Leave the AutoCount Chrome window **open** if it shows **Log In** — the
+   agent will reuse it. Do not close it while signing in.
 
 ## Run
 
@@ -95,17 +91,20 @@ AutoCount Cloud report the way a person does:
 
 1. `POST /api/print-agent/jobs/next` with `Authorization: Bearer …`
 2. Receives the server-resolved Cloud report HTTPS URL
-3. Opens **headed** Google Chrome at
-   `C:\Program Files\Google\Chrome\Application\chrome.exe` with the office
-   Cloud login (the print-agent profile). It waits until the Cloud report
-   is showing — not the AutoCount **Log In** page.
-4. Clicks AutoCount **Print Report** in the report viewer, then prints that
-   printout to **EPSONE85FF0 (L6460 Series)** by that exact printer name
-   (never the Windows default printer). Chrome kiosk-printing plus sticky
-   print settings target that named Epson; a Windows Print dialog, if one
-   appears, is accepted only when that same printer is selected.
+3. Opens **headed** Google Chrome with the print-agent profile to
+   `https://accounting.autocountcloud.com/` (AutoCount Accounting) first.
+   It waits until that app is showing — not **Log In** (at least 180
+   seconds). It does not kill a Chrome window that is already open for
+   login.
+4. Then opens the official Cloud report URL (same as the phone **Open
+   Cloud Report** button) in that same Chrome session so SSO cookies
+   apply. Clicks **Print Report**, then prints that printout to
+   **EPSONE85FF0 (L6460 Series)** by that exact printer name (never the
+   Windows default printer).
 5. `POST /api/print-agent/jobs/{id}/complete` with `printed` or `failed`
 
-If the report host shows **Log In**, the job fails and the iPhone shows the
-error. Repeat the one-time Chrome profile login above, open any invoice
-report once, then close Chrome. A login page is never sent to the Epson.
+If the Chrome window still shows **Log In**, the job fails, Chrome is
+**left open**, and the iPhone shows: sign in on the AutoCount Chrome
+window on the office PC, then tap Print again. A login page is never
+sent to the Epson. Chrome is closed only after a successful print to
+that named Epson.

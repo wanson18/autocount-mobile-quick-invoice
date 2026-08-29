@@ -208,9 +208,28 @@ def test_print_script_fails_closed_on_autocount_login_page():
     assert "Print Report" in source
     assert "Cetak" in source
     assert "ctrl+p" in lowered or "keybd_event" in source
-    assert "Math]::Max($WaitSeconds, 90)" in source or "Math]::Max($WaitSeconds,90)" in source
+    assert "Math]::Max($WaitSeconds, 180)" in source or "Math]::Max($WaitSeconds,180)" in source
     assert "Get-PrintJob" in source
     assert "GetForegroundWindow" in source
+    assert "https://accounting.autocountcloud.com/" in source
+    assert "tap Print again" in source
+    assert "Leave that window open" in source
+
+
+def test_print_script_leaves_chrome_open_on_login_and_closes_only_after_print():
+    """Killing the print-agent Chrome profile at start/finally closed the
+    AutoCount login window while the office user was signing in. Only stop
+    that Chrome after a named-Epson spooler job.
+    """
+    source = _print_script_source()
+    assert "Stop-ProfileChrome $UserDataDir" in source
+    finally_idx = source.find("} finally {")
+    if finally_idx != -1:
+        assert "Stop-ProfileChrome" not in source[finally_idx : finally_idx + 80]
+    launch_idx = source.find("https://accounting.autocountcloud.com/")
+    first_stop = source.find("Stop-ProfileChrome $UserDataDir")
+    assert launch_idx != -1
+    assert first_stop > launch_idx
 
 
 def test_print_script_never_logs_cloud_url():
@@ -243,12 +262,13 @@ def test_print_cloud_report_docstring_describes_headed_print_report():
     assert "print report" in lowered
     assert "headless" not in lowered
     assert "print-to-pdf" not in lowered
+    assert "accounting.autocountcloud.com" in lowered
 
 
 def test_default_print_wait_covers_sso_and_report_render():
-    assert agent.DEFAULT_PRINT_WAIT_SECONDS >= 90
+    assert agent.DEFAULT_PRINT_WAIT_SECONDS >= 180
     config = _config()
-    assert config.print_wait_seconds >= 90
+    assert config.print_wait_seconds >= 180
 
 
 def test_print_cloud_report_fails_closed_off_windows():

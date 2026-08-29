@@ -1,8 +1,8 @@
 """Office Windows print agent.
 
-Polls the live API, claims a queued invoice print job, opens the official
-AutoCount Cloud report in headed Google Chrome using the office PC's Cloud
-login, clicks Print Report, and sends that printout to printer
+Polls the live API, claims a queued invoice print job, opens AutoCount
+Accounting in headed Google Chrome, then the official Cloud report, clicks
+Print Report, and sends that printout to printer
 ``EPSONE85FF0 (L6460 Series)`` by that exact name. Configure via environment
 variables or a gitignored ``print-agent.local.json`` next to this script.
 
@@ -29,7 +29,7 @@ from typing import Any, Callable
 DEFAULT_PRINTER_NAME = "EPSONE85FF0 (L6460 Series)"
 DEFAULT_API_BASE = "https://autocount-mobile-quick-invoice.vercel.app"
 DEFAULT_POLL_INTERVAL = 3.0
-DEFAULT_PRINT_WAIT_SECONDS = 90
+DEFAULT_PRINT_WAIT_SECONDS = 180
 CONFIG_FILENAME = "print-agent.local.json"
 
 
@@ -220,11 +220,13 @@ def handle_claimed_job(
 def print_cloud_report(url: str, printer_name: str, config: AgentConfig) -> None:
     """Print the official Cloud report on Windows to the named Epson.
 
-    Opens the Cloud URL in headed Google Chrome with a dedicated profile
-    (so the office AutoCount Cloud login can persist), waits until the
-    Cloud report is showing (not the login page), clicks AutoCount Print Report,
-    and prints that printout to the printer named exactly ``printer_name``.
-    The Windows default printer is never read or changed.
+    Opens AutoCount Accounting (accounting.autocountcloud.com) in headed
+    Google Chrome with a dedicated profile, waits until that app is showing
+    (not the login page), then opens the Cloud report URL — the same report
+    the phone Open Cloud Report button uses — so SSO cookies apply. Clicks
+    AutoCount Print Report and prints that printout to the printer named
+    exactly ``printer_name``. The Windows default printer is never read or
+    changed.
     """
     if sys.platform != "win32":
         raise PrintAgentError(
@@ -250,7 +252,7 @@ def print_cloud_report(url: str, printer_name: str, config: AgentConfig) -> None
     ]
     if config.chrome_user_data_dir:
         args.extend(["-UserDataDir", config.chrome_user_data_dir])
-    timeout_seconds = max(int(config.print_wait_seconds), 90) + 120
+    timeout_seconds = max(int(config.print_wait_seconds), 180) + 180
     try:
         completed = subprocess.run(
             args, capture_output=True, text=True, check=False, timeout=timeout_seconds

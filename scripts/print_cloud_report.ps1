@@ -1,20 +1,21 @@
 # Print the official AutoCount Cloud invoice report to a named Windows printer.
 #
-# This does not rebuild the invoice. Headed Google Chrome opens the Cloud
-# report URL (the same report the mobile "Open Cloud Report" button uses)
-# with a dedicated profile so the office AutoCount Cloud login can persist.
-# After the generated report is showing (not the AutoCount login page), the
-# script clicks AutoCount Print Report and prints that printout to the named
-# Epson. A headed Chrome window is required; dumping the Cloud URL to PDF
-# printed the AutoCount login page and is not used.
+# This does not rebuild the invoice. Headed Google Chrome first opens
+# AutoCount Accounting (accounting.autocountcloud.com) with a dedicated
+# profile so the office Cloud login can persist. Only after that app is
+# showing (not Log In) does it open the Cloud report URL (the same report
+# the mobile "Open Cloud Report" button uses) so SSO cookies apply. Then it
+# clicks AutoCount Print Report and prints that printout to the named Epson.
+#
+# The report host (accounting-report.autocountcloud.com) shows Log In even
+# when Accounting is already signed in if opened cold. Do not open the
+# report URL first. Do not kill print-profile Chrome at start (the office
+# user may be mid-login). Leave Chrome open on Log In. Close it only after
+# a successful print to the named Epson.
 #
 # The Windows default printer is never read or changed. Jobs always go to
 # the exact printer name passed in (office printer: EPSONE85FF0 (L6460 Series)).
 # The Cloud report URL is never logged (the account-book path lives in it).
-#
-# One-time setup: start Chrome with this profile, log into AutoCount Cloud,
-# open any invoice report once, then close Chrome before running the agent:
-#   "C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir="%LOCALAPPDATA%\AutocountPrintAgent\ChromeProfile"
 #
 # Keep this a simple script: no Parameter attributes and no CmdletBinding.
 # A nested advanced helper inside an advanced script caused Windows
@@ -270,6 +271,53 @@ function Test-LoginWindowTitle($title) {
     return $false
 }
 
+function Throw-SignInThenPrintAgain {
+    throw "Sign in on the AutoCount Chrome window on the office PC, then tap Print again. Leave that window open."
+}
+
+function Test-AccountingAppTitle($title) {
+    if (-not $title) { return $false }
+    if (Test-LoginWindowTitle $title) { return $false }
+    $t = $title.ToLowerInvariant()
+    return ($t -match 'autocount\s+accounting')
+}
+
+function Wait-ForAccountingApp($profileDir, $timeoutSeconds) {
+    $deadline = (Get-Date).AddSeconds($timeoutSeconds)
+    $sawLogin = $false
+    $ready = $null
+    while ((Get-Date) -lt $deadline) {
+        foreach ($win in @(Get-ProfileChromeWindows $profileDir)) {
+            $title = [string]$win.Title
+            if (Test-LoginWindowTitle $title) {
+                $sawLogin = $true
+                continue
+            }
+            if (Test-AccountingAppTitle $title) {
+                $ready = $win
+                break
+            }
+        }
+        if ($ready) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    if ($ready) { return $ready }
+    Throw-SignInThenPrintAgain
+}
+
+function Open-ProfileChromeUrl($chromeExe, $profileDir, $pageUrl) {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $chromeExe
+    $psi.UseShellExecute = $false
+    $psi.Arguments = (
+        '--user-data-dir="{0}" --kiosk-printing --no-first-run --no-default-browser-check --start-maximized --force-renderer-accessibility --hide-crash-restore-bubble "{1}"' -f $profileDir, $pageUrl
+    )
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    if (-not $proc) {
+        throw "Google Chrome did not start for the print-agent profile."
+    }
+}
+
 function Test-ReadyReportTitle($title) {
     if (-not $title) { return $false }
     if (Test-LoginWindowTitle $title) { return $false }
@@ -312,13 +360,10 @@ function Wait-ForCloudReport($profileDir, $timeoutSeconds) {
         Start-Sleep -Milliseconds 500
     }
     if (-not $bestWindow) {
-        if ($sawLogin) {
-            throw "Cloud report is still the AutoCount login page (Log In). Log into AutoCount Cloud in the print-agent Chrome profile, open any invoice report once, then close Chrome."
-        }
-        throw "Chrome did not show the generated Cloud report in time. Confirm the print-agent Chrome profile is logged into AutoCount Cloud."
+        Throw-SignInThenPrintAgain
     }
     if (Test-LoginWindowTitle $bestWindow.Title) {
-        throw "Cloud report is still the AutoCount login page (Log In). Log into AutoCount Cloud in the print-agent Chrome profile, open any invoice report once, then close Chrome."
+        Throw-SignInThenPrintAgain
     }
     $result = @{
         Window = $bestWindow
@@ -664,35 +709,35 @@ function Get-NewPdfFiles($folders, $since) {
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 
-Stop-ProfileChrome $UserDataDir
-try {
-    Set-ChromePrintPrefs $UserDataDir $PrinterName $workDir
-} catch {
-    # Prefs merge is best-effort; continue to Print Report.
+$accountingHome = "https://accounting.autocountcloud.com/"
+$profileChromeRunning = (@(Get-ProfileChromePids $UserDataDir).Count -gt 0)
+if (-not $profileChromeRunning) {
+    try {
+        Set-ChromePrintPrefs $UserDataDir $PrinterName $workDir
+    } catch {
+        # Prefs merge is best-effort; continue to Print Report.
+    }
 }
 
-$chromePsi = New-Object System.Diagnostics.ProcessStartInfo
-$chromePsi.FileName = $chrome
-$chromePsi.UseShellExecute = $false
-# Headed Chrome only (no headless PDF dump of the Cloud URL).
-# --force-renderer-accessibility exposes AutoCount Print Report to UI Automation.
-# --hide-crash-restore-bubble avoids a restore prompt after leftover profile Chrome was stopped.
-$chromePsi.Arguments = (
-    '--user-data-dir="{0}" --kiosk-printing --no-first-run --no-default-browser-check --start-maximized --force-renderer-accessibility --hide-crash-restore-bubble "{1}"' -f $UserDataDir, $Url
-)
-$chromeProc = [System.Diagnostics.Process]::Start($chromePsi)
-if (-not $chromeProc) {
-    throw "Google Chrome did not start for the print-agent profile."
-}
+# Do not kill print-profile Chrome here. It may already be open for login.
+Open-ProfileChromeUrl $chrome $UserDataDir $accountingHome
 
 try {
+    $waitForAccounting = [Math]::Max($WaitSeconds, 180)
+    $accountingWindow = Wait-ForAccountingApp $UserDataDir $waitForAccounting
+    if (Test-LoginWindowTitle $accountingWindow.Title) {
+        Throw-SignInThenPrintAgain
+    }
+
+    Open-ProfileChromeUrl $chrome $UserDataDir $Url
+    Start-Sleep -Seconds 2
+
     $waitForReport = [Math]::Max($WaitSeconds, 90)
     $report = Wait-ForCloudReport $UserDataDir $waitForReport
     $reportWindow = $report.Window
     $printControl = $report.PrintControl
-    $chromeEl = $report.Element
     if (Test-LoginWindowTitle $reportWindow.Title) {
-        throw "Cloud report is still the AutoCount login page (Log In). Log into AutoCount Cloud in the print-agent Chrome profile, open any invoice report once, then close Chrome."
+        Throw-SignInThenPrintAgain
     }
 
     $jobsBefore = @(Get-NamedPrinterJobIds $PrinterName)
@@ -709,7 +754,7 @@ try {
 
     if (-not $usedPrintReport) {
         if (Test-LoginWindowTitle $reportWindow.Title) {
-            throw "Cloud report is still the AutoCount login page (Log In). Refusing to send Ctrl+P."
+            Throw-SignInThenPrintAgain
         }
         Send-CtrlPToWindow $reportWindow.Hwnd
     }
@@ -760,6 +805,7 @@ try {
     }
 
     Start-Sleep -Seconds 6
-} finally {
     Stop-ProfileChrome $UserDataDir
+} catch {
+    throw
 }
