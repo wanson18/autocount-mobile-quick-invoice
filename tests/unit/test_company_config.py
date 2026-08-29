@@ -204,3 +204,5 @@ def test_print_agent_config_helpers_are_gone():
     assert not hasattr(config, "get_print_job_claim_lease_seconds")
     assert not hasattr(config, "ENV_PRINT_AGENT_TOKEN")
     assert not hasattr(config, "ENV_OFFICE_PRINTER_NAME")
+    assert not hasattr(config, "ENV_PRINT_JOB_CLAIM_LEASE_SECONDS")
+    assert not hasattr(config, "DEFAULT_PRINT_JOB_CLAIM_LEASE_SECONDS")

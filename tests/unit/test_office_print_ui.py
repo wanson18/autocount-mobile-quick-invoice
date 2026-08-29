@@ -18,8 +18,10 @@ def _read_index_html():
 
 def test_detail_keeps_cloud_report_and_edit_without_office_print():
     body = _render_invoice_detail_body(_read_app_js())
+    html = _read_index_html()
     assert 'id="detail-open-cloud-report-btn">Open Cloud Report</button>' in body
     assert "Edit lines" in body
+    assert 'id="back-btn">Back</button>' in html
     assert "Print</button>" not in body
     assert "print-office-btn" not in body
     assert "detail-print-office-btn" not in body

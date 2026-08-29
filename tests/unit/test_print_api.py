@@ -27,8 +27,18 @@ def _assert_gone(response) -> None:
         body = response.json()
     except ValueError:
         return
-    if isinstance(body, dict):
-        assert body.get("data", {}).get("status") != "queued"
+    if not isinstance(body, dict):
+        return
+    # A resurrected print handler that 404s as invoice_not_found would still
+    # be a print route. Starlette's unmatched mount answers {"detail": ...}.
+    assert "data" not in body
+    assert body.get("error") not in {
+        "invoice_not_found",
+        "unsupported",
+        "unauthorized",
+        "print_job_not_found",
+        "print_job_conflict",
+    }
 
 
 def test_print_enqueue_and_status_routes_are_gone():
