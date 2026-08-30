@@ -487,44 +487,34 @@ def test_api_responses_are_not_given_cache_headers(api):
     assert "cache-control" not in client.get("/api/companies").headers
 
 
-def test_cloud_report_redirect_uses_verified_invoice_and_hides_account_book(api, monkeypatch):
+def test_cloud_report_redirect_uses_selected_company_book_and_invoice_key(api, monkeypatch):
+    # This is the stale single-template value that caused Enterprise invoices
+    # to open in the Sdn Bhd book in production.
     monkeypatch.setenv(
         "AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE",
-        "https://cloud.test.invalid/invoice?docKey={doc_key}",
+        "https://accounting-report.autocountcloud.com/rpt/63688/invoice?"
+        "reportName=WANSON+SDN+BHD+E-INVOICE+&docKey={doc_key}",
     )
+    client, _, _ = api
+    response = client.get(
+        "/api/enterprise/invoices/INV-2026-0001/cloud-report",
+        follow_redirects=False,
+    )
+    assert response.status_code == 307
+    assert response.headers["location"] == (
+        "https://accounting-report.autocountcloud.com/rpt/"
+        "ab-wanson-enterprise-001/invoice?reportName=Wanson+Enterprise+Invoice"
+        "&docKey=inv-1"
+    )
+    assert SDN_BHD_AB not in response.headers["location"]
+
+
+def test_cloud_report_redirect_works_without_the_old_global_template(api, monkeypatch):
+    monkeypatch.delenv("AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE", raising=False)
     client, _, _ = api
     response = client.get(
         "/api/sdn_bhd/invoices/INV-2026-0001/cloud-report",
         follow_redirects=False,
     )
     assert response.status_code == 307
-    assert response.headers["location"] == (
-        "https://cloud.test.invalid/invoice?docKey=inv-1"
-    )
-    assert SDN_BHD_AB not in response.text
-
-
-def test_cloud_report_redirect_does_not_create_or_update_invoice(api):
-    client, _, _ = api
-    response = client.get(
-        "/api/sdn_bhd/invoices/INV-2026-0001/cloud-report",
-        follow_redirects=False,
-    )
-    assert response.status_code == 501
-
-
-def test_cloud_report_redirect_rejects_invalid_server_template(api, monkeypatch):
-    monkeypatch.setenv(
-        "AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE",
-        "https://cloud.test.invalid/invoice?docKey=9001",
-    )
-    client, _, _ = api
-    response = client.get(
-        "/api/sdn_bhd/invoices/INV-2026-0001/cloud-report",
-        follow_redirects=False,
-    )
-    assert response.status_code == 500
-    assert response.json() == {
-        "error": "server_configuration_error",
-        "message": "Cloud report URL configuration is invalid",
-    }
+    assert "/rpt/ab-wanson-sdn-bhd-001/invoice" in response.headers["location"]

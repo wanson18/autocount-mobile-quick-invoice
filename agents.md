@@ -11,6 +11,10 @@
   AutoCount PDF API — do not invent one, scrape Cloud HTML, or generate a
   homemade invoice layout. Office printing is done in AutoCount Cloud (then
   the Epson app), not by a Windows print-agent queue in this repo.
+- **Company-scoped Cloud routing.** The server resolves the selected
+  `CompanyKey` to its own account book and report name, then uses the
+  server-confirmed invoice `docKey`. Never reuse one global Cloud URL template
+  for both Wanson Enterprise and Wanson Sdn Bhd.
 - **Workflow:** Implement code task-by-task based on `autocount_mobile_invoice_v1_plan.md` (see also `autocount_mobile_invoice_v1_spec.md` for requirements).
 - **Testing:** Always run `pytest tests/` before committing. Prefer adding a regression test over a one-off manual check.
 - **Git Strategy:** Small, clean commits with a message that states the root cause, not just the symptom (see commit history from 2026-08 for the pattern).

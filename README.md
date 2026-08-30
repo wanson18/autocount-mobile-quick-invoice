@@ -76,8 +76,8 @@ Design rules:
   listing before anything else — one exact line match completes it, zero
   fails it, several require manual reconciliation.
 - **Fail closed.** Undocumented AutoCount features (e.g. PDF) raise
-  `501 unsupported`; Cloud report handoff raises `501` when the Cloud report
-  template is missing. Upstream errors are sanitised at the
+  `501 unsupported`; the Cloud report handoff verifies the invoice in the
+  selected company before redirecting. Upstream errors are sanitised at the
   client boundary so
   no credential, account-book ID, or taxpayer data can leak. A malformed or
   unexpected AutoCount response (e.g. a create response missing its
@@ -141,7 +141,6 @@ uv pip install -e ".[dev]"        # fastapi, uvicorn, pydantic, httpx, psycopg, 
 | `AUTOCOUNT_API_KEY` | yes | AutoCount Cloud Integration API Key |
 | `AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE` | yes | Enterprise account-book ID |
 | `AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD` | yes | Sdn Bhd account-book ID |
-| `AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE` | no (required for Cloud handoff) | Server-side HTTPS AutoCount Cloud report template with one `{doc_key}` placeholder; keep the account-book path out of source and browser assets |
 | `INVOICE_REQUESTS_DB` | no | SQLite idempotency DB path (default `data/invoice_requests.db`) — used only when `POSTGRES_URL`/`DATABASE_URL` is unset |
 | `POSTGRES_URL` or `DATABASE_URL` | no (required on Vercel) | Postgres connection string; when set, idempotency storage switches from SQLite to Postgres. Required on serverless hosts (Vercel) where the local filesystem does not persist between invocations |
 
@@ -190,7 +189,6 @@ npx vercel env add AUTOCOUNT_API_KEY_ID production
 npx vercel env add AUTOCOUNT_API_KEY production
 npx vercel env add AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE production
 npx vercel env add AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD production
-npx vercel env add AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE production
 npx vercel env add POSTGRES_URL production   # required — see below
 npx vercel --prod
 ```

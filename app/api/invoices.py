@@ -13,11 +13,12 @@ Prices are serialised as exact strings, never binary floats.
 """
 
 from datetime import date, timedelta
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import RedirectResponse, Response
 
-from app.config import get_cloud_invoice_url_template, get_company
+from app.config import get_company
 from app.dependencies import (
     get_invoice_edit_service,
     get_invoice_service,
@@ -44,7 +45,6 @@ from app.models.master_data import (
     InvoiceListResponse,
     InvoiceSummary,
 )
-from app.services.cloud_report_link import build_cloud_report_url
 from app.services.invoice_edit_service import (
     EDIT_WINDOW_DAYS,
     is_editable,
@@ -53,6 +53,14 @@ from app.services.invoice_edit_service import (
 from app.services.price_history import get_price_history
 
 router = APIRouter(tags=["invoices"])
+
+_CLOUD_REPORT_BASE_URL = "https://accounting-report.autocountcloud.com"
+_INVOICE_REPORT_NAMES = {
+    CompanyKey.ENTERPRISE: "Wanson Enterprise Invoice",
+    # Keep the existing Sdn Bhd report name, including its trailing space,
+    # because that is the configured AutoCount report identity.
+    CompanyKey.SDN_BHD: "WANSON SDN BHD E-INVOICE ",
+}
 
 #: How far back the recent-invoice list looks by default. Deliberately much
 #: shorter than ``EDIT_WINDOW_DAYS``: browsing is for "what did I just issue",
@@ -269,24 +277,15 @@ async def get_cloud_report(
     or the account-book path; only the company key and document number travel in
     the request, and the response carries no AutoCount data or credentials.
     """
-    invoice = await read_invoice(master, get_company(company), doc_no)
-    template = get_cloud_invoice_url_template()
-    if not template:
-        return JSONResponse(
-            status_code=501,
-            content={
-                "error": "unsupported",
-                "message": "Cloud report URL is not configured on the server",
-            },
+    selected_company = get_company(company)
+    invoice = await read_invoice(master, selected_company, doc_no)
+    location = (
+        f"{_CLOUD_REPORT_BASE_URL}/rpt/{selected_company.account_book_id}/invoice?"
+        + urlencode(
+            {
+                "reportName": _INVOICE_REPORT_NAMES[company],
+                "docKey": invoice.id,
+            }
         )
-    try:
-        url = build_cloud_report_url(template, invoice.id)
-    except ValueError:
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "server_configuration_error",
-                "message": "Cloud report URL configuration is invalid",
-            },
-        )
-    return RedirectResponse(url=url, status_code=307)
+    )
+    return RedirectResponse(url=location, status_code=307)
