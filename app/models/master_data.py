@@ -36,12 +36,16 @@ class DeliveryAddress:
 
     ``id`` is a stable adapter ID derived from the owning customer's code, so
     an address object can never be accepted for another customer or account
-    book.
+    book. ``billing_address_text`` is the billing address read from the same
+    customer master record; it is kept alongside the selected delivery
+    address so invoice creation can populate AutoCount's separate billing
+    address field without another customer lookup.
     """
 
     id: str
     label: str
     address_text: str
+    billing_address_text: str = ""
 
 
 @dataclass(frozen=True)

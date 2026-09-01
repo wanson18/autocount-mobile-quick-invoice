@@ -80,6 +80,7 @@ def test_maps_confirmed_draft_to_approved_invoice_payload():
             "docDate": "2026-08-03",
             "debtorCode": "700-C001",
             "debtorName": "Restoran Contoh",
+            "address": "1, Jalan Example\n31450 Ipoh",
             "deliverAddress": "1, Jalan Example\n31450 Ipoh",
             "creditTerm": DEFAULT_CREDIT_TERM,
             "salesLocation": DEFAULT_SALES_LOCATION,
@@ -110,6 +111,31 @@ def test_maps_confirmed_draft_to_approved_invoice_payload():
         },
         "saveApprove": True,
     }
+
+
+def test_maps_customer_billing_address_to_invoice_master_address():
+    address = DeliveryAddress(
+        id="700-C001:delivery",
+        label="Default delivery address",
+        address_text="Warehouse entrance\n31450 Ipoh",
+        billing_address_text="Accounts office\n1, Jalan Billing\n31450 Ipoh",
+    )
+
+    payload = map_invoice_payload(
+        make_draft(), resolved_customer(), address, resolved_products()
+    )
+
+    assert payload["master"]["address"] == (
+        "Accounts office\n1, Jalan Billing\n31450 Ipoh"
+    )
+
+
+def test_maps_delivery_address_as_billing_fallback_when_master_billing_is_blank():
+    payload = map_invoice_payload(
+        make_draft(), resolved_customer(), resolved_address(), resolved_products()
+    )
+
+    assert payload["master"]["address"] == "1, Jalan Example\n31450 Ipoh"
 
 
 def test_default_credit_term_and_sales_location_are_wanson_standard_terms():

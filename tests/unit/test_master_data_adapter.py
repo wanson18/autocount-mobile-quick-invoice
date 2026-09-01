@@ -305,6 +305,8 @@ def test_get_delivery_addresses_returns_stable_default_address():
             json={
                 "accNo": "300-D001",
                 "companyName": "Customer A",
+                "address": "Accounts office, Ipoh",
+                "postCode": "30000",
                 "deliverAddress": "116 Jalan Damai, Kuala Lumpur",
                 "deliverPostCode": "55000",
             },
@@ -324,6 +326,7 @@ def test_get_delivery_addresses_returns_stable_default_address():
             id="300-D001:delivery",
             label="Default delivery address",
             address_text="116 Jalan Damai, Kuala Lumpur\n55000",
+            billing_address_text="Accounts office, Ipoh\n30000",
         ),
     ]
     request = captured[0]

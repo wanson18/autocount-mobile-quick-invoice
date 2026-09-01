@@ -97,24 +97,26 @@ class AutoCountMasterDataAdapter:
             raise AutoCountDataError(
                 "AutoCount returned a different debtor for the requested customer"
             )
-        address = debtor.get("deliverAddress")
-        if address is None or (isinstance(address, str) and not address.strip()):
+        address_text = self._normalise_address(
+            debtor,
+            address_keys=("deliverAddress", "DeliverAddress"),
+            postcode_keys=("deliverPostCode", "DeliverPostCode"),
+            label="delivery",
+        )
+        if not address_text:
             return []
-        if not isinstance(address, str):
-            raise AutoCountDataError("AutoCount debtor delivery address is malformed")
-        address_text = address.strip()
-        postcode = debtor.get("deliverPostCode")
-        if postcode is not None:
-            if not isinstance(postcode, str):
-                raise AutoCountDataError("AutoCount debtor delivery postcode is malformed")
-            postcode = postcode.strip()
-            if postcode and postcode not in address_text:
-                address_text = f"{address_text}\n{postcode}"
+        billing_address_text = self._normalise_address(
+            debtor,
+            address_keys=("address", "Address"),
+            postcode_keys=("postCode", "PostCode"),
+            label="billing",
+        )
         return [
             DeliveryAddress(
                 id=f"{customer_id}:delivery",
                 label=DEFAULT_ADDRESS_LABEL,
                 address_text=address_text,
+                billing_address_text=billing_address_text,
             )
         ]
 
@@ -470,6 +472,47 @@ class AutoCountMasterDataAdapter:
         code = cls._pick(row, "accNo", "AccNo", "debtor code")
         name = cls._pick(row, "companyName", "CompanyName", "debtor name")
         return CustomerSummary(id=code, code=code, name=name)
+
+    @classmethod
+    def _normalise_address(
+        cls,
+        row: dict[str, Any],
+        *,
+        address_keys: tuple[str, str],
+        postcode_keys: tuple[str, str],
+        label: str,
+    ) -> str:
+        """Return one customer address with its postcode on a new line.
+
+        Billing and delivery addresses are distinct fields in AutoCount's
+        debtor and invoice master models. A blank optional billing address is
+        represented as ``""`` so the invoice mapper can use the confirmed
+        delivery address as its safe fallback; a blank delivery address still
+        causes the existing address-selection gate to return no options.
+        """
+        address = cls._first_non_null(row, address_keys)
+        if address is None or (isinstance(address, str) and not address.strip()):
+            return ""
+        if not isinstance(address, str):
+            raise AutoCountDataError(f"AutoCount debtor {label} address is malformed")
+        address_text = address.strip()
+
+        postcode = cls._first_non_null(row, postcode_keys)
+        if postcode is not None:
+            if not isinstance(postcode, str):
+                raise AutoCountDataError(f"AutoCount debtor {label} postcode is malformed")
+            postcode = postcode.strip()
+            if postcode and postcode not in address_text:
+                address_text = f"{address_text}\n{postcode}"
+        return address_text
+
+    @staticmethod
+    def _first_non_null(row: dict[str, Any], keys: tuple[str, str]) -> Any:
+        for key in keys:
+            value = row.get(key)
+            if value is not None:
+                return value
+        return None
 
     @classmethod
     def _product_row(cls, row: Any) -> ProductSummary:

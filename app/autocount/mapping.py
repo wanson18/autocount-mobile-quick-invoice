@@ -55,8 +55,16 @@ def map_invoice_payload(
         raise ValueError("resolved customer does not match the confirmed draft")
     if delivery_address.id != draft.delivery_address_id:
         raise ValueError("resolved delivery address does not match the confirmed draft")
-    if not delivery_address.address_text.strip():
+    delivery_address_text = delivery_address.address_text.strip()
+    if not delivery_address_text:
         raise ValueError("resolved delivery address must not be blank")
+    billing_address_text = delivery_address.billing_address_text.strip()
+    if not billing_address_text:
+        # AutoCount keeps billing and delivery addresses in separate invoice
+        # master fields. Older/customer records may have no billing address;
+        # the confirmed customer-owned delivery address is the least
+        # surprising printable fallback and preserves the existing flow.
+        billing_address_text = delivery_address_text
 
     details: list[dict[str, Any]] = []
     for line in draft.lines:
@@ -84,7 +92,8 @@ def map_invoice_payload(
             "docDate": draft.invoice_date.isoformat(),
             "debtorCode": draft.customer_id,
             "debtorName": customer.name,
-            "deliverAddress": delivery_address.address_text.strip(),
+            "address": billing_address_text,
+            "deliverAddress": delivery_address_text,
             "creditTerm": DEFAULT_CREDIT_TERM,
             "salesLocation": DEFAULT_SALES_LOCATION,
             "submitEInvoice": False,
