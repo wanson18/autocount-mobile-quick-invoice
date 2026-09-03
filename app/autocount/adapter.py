@@ -14,6 +14,8 @@ Normalisation and isolation:
   ``price`` (numeric string or number; never a binary float).
 - A delivery address is owned by its customer: the stable adapter ID is
   ``"<customer_id>:delivery"`` and a mismatched debtor is rejected.
+- Customer detail retains the debtor's linked ``taxEntity`` and product detail
+  retains ``classificationCode`` so the issue payload can carry both values.
 - An invoice's identity is its AutoCount document key (``docKey``); invoice
   listing rows carry the documented ``master``/``details`` view-model shape.
 - Malformed or inconsistent 2xx payloads fail closed with
@@ -86,10 +88,7 @@ class AutoCountMasterDataAdapter:
         cross-customer debtor is rejected and never yields an address.
         """
         customer_id = self._validate_id(customer_id, "customer_id")
-        response = await self._client.read(
-            company, "GET", "debtor", params={"code": customer_id}
-        )
-        debtor = self._json_object(response, "AutoCount returned a malformed debtor payload")
+        debtor = await self._get_debtor(company, customer_id)
         returned_code = self._pick(
             debtor, "accNo", "AccNo", "debtor code"
         )
@@ -119,6 +118,26 @@ class AutoCountMasterDataAdapter:
                 billing_address_text=billing_address_text,
             )
         ]
+
+    async def get_customer(
+        self, company: CompanyConfig, customer_id: str
+    ) -> CustomerSummary:
+        """Fetch one customer with the tax entity linked in its debtor master."""
+        customer_id = self._validate_id(customer_id, "customer_id")
+        debtor = await self._get_debtor(company, customer_id)
+        code = self._pick(debtor, "accNo", "AccNo", "debtor code")
+        if code != customer_id:
+            raise AutoCountDataError(
+                "AutoCount returned a different debtor for the requested customer"
+            )
+        return CustomerSummary(
+            id=code,
+            code=code,
+            name=self._pick(debtor, "companyName", "CompanyName", "debtor name"),
+            tax_entity=self._optional_pick(
+                debtor, "taxEntity", "TaxEntity", "tax entity"
+            ),
+        )
 
     async def search_items(
         self, company: CompanyConfig, query: str
@@ -350,6 +369,14 @@ class AutoCountMasterDataAdapter:
             )
         return self._product_summary(product)
 
+    async def _get_debtor(
+        self, company: CompanyConfig, customer_id: str
+    ) -> dict[str, Any]:
+        response = await self._client.read(
+            company, "GET", "debtor", params={"code": customer_id}
+        )
+        return self._json_object(response, "AutoCount returned a malformed debtor payload")
+
     async def _listing(
         self,
         company: CompanyConfig,
@@ -530,7 +557,18 @@ class AutoCountMasterDataAdapter:
         code = cls._product_code(product)
         name = cls._product_name(product)
         price = cls._product_price(product)
-        return ProductSummary(id=code, code=code, name=name, default_price=price)
+        return ProductSummary(
+            id=code,
+            code=code,
+            name=name,
+            default_price=price,
+            classification_code=cls._optional_pick(
+                product,
+                "classificationCode",
+                "ClassificationCode",
+                "classification code",
+            ),
+        )
 
     @staticmethod
     def _product_code(product: dict[str, Any]) -> str:
@@ -691,6 +729,54 @@ class AutoCountMasterDataAdapter:
         if value is None or not isinstance(value, str) or not value.strip():
             raise AutoCountDataError(f"AutoCount returned a malformed {what}")
         return value.strip()
+
+    @staticmethod
+    def _optional_pick(
+        row: dict[str, Any], camel: str, pascal: str, what: str
+    ) -> str | None:
+        """Extract an optional text field while rejecting malformed conflicts."""
+        camel_value = row.get(camel)
+        pascal_value = row.get(pascal)
+        if (
+            camel_value is not None
+            and pascal_value is not None
+            and camel_value != pascal_value
+        ):
+            raise AutoCountDataError(f"AutoCount returned conflicting {what} fields")
+        value = camel_value if camel_value is not None else pascal_value
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise AutoCountDataError(f"AutoCount returned a malformed {what}")
+        value = value.strip()
+        return value or None
+
+    @staticmethod
+    def _optional_text(
+        row: dict[str, Any], camel: str, pascal: str, what: str
+    ) -> str | None:
+        """Extract an optional text field without weakening conflicts.
+
+        Invoice listings are also used by price history, which does not need
+        an address. Missing or blank addresses remain ``None`` so that the
+        reconciliation boundary can reject them explicitly; malformed or
+        conflicting representations still fail closed.
+        """
+        camel_value = row.get(camel)
+        pascal_value = row.get(pascal)
+        if (
+            camel_value is not None
+            and pascal_value is not None
+            and camel_value != pascal_value
+        ):
+            raise AutoCountDataError(f"AutoCount returned conflicting {what} fields")
+        value = camel_value if camel_value is not None else pascal_value
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise AutoCountDataError(f"AutoCount returned a malformed {what}")
+        value = value.strip()
+        return value or None
 
     @staticmethod
     def _validate_query(query: object) -> None:

@@ -38,9 +38,15 @@ SDN_BHD_AB = "ab-wanson-sdn-bhd-001"
 
 class FakeMasterData:
     def __init__(self):
-        self.customer = CustomerSummary("C001", "C001", "Customer One")
+        self.customer = CustomerSummary(
+            "C001", "C001", "Customer One", tax_entity="TIN:C23453889090"
+        )
         self.product = ProductSummary(
-            "ITEM-1", "ITEM-1", "Cooking Oil", Decimal("30.00")
+            "ITEM-1",
+            "ITEM-1",
+            "Cooking Oil",
+            Decimal("30.00"),
+            classification_code="022",
         )
         self.address = DeliveryAddress(
             "C001:delivery", "Default delivery address", "1 Main Street"
@@ -55,6 +61,10 @@ class FakeMasterData:
     async def search_customers(self, company, query):
         self.lookup_calls.append(("customers", company))
         return [self.customer] if "C001" in query.upper() else []
+
+    async def get_customer(self, company, customer_id):
+        self.lookup_calls.append(("customer", company, customer_id))
+        return self.customer
 
     async def get_delivery_addresses(self, company, customer_id):
         self.lookup_calls.append(("addresses", company, customer_id))

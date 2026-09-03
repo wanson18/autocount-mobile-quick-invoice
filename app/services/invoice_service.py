@@ -52,6 +52,10 @@ RECONCILE_WINDOW = timedelta(hours=1)
 
 
 class MasterDataPort(Protocol):
+    async def get_customer(
+        self, company: CompanyConfig, customer_id: str
+    ) -> CustomerSummary: ...
+
     async def search_customers(
         self, company: CompanyConfig, query: str
     ) -> list[CustomerSummary]: ...
@@ -217,17 +221,12 @@ class InvoiceService:
     async def _resolve_customer(
         self, company: CompanyConfig, customer_id: str
     ) -> CustomerSummary:
-        customers = await self.master_data.search_customers(company, customer_id)
-        matches = [
-            customer
-            for customer in customers
-            if customer.id == customer_id and customer.code == customer_id
-        ]
-        if len(matches) != 1:
+        customer = await self.master_data.get_customer(company, customer_id)
+        if customer.id != customer_id or customer.code != customer_id:
             raise InvoiceValidationError(
                 f"customer {customer_id!r} does not belong to selected company"
             )
-        return matches[0]
+        return customer
 
     async def _resolve_address(
         self, company: CompanyConfig, customer_id: str, address_id: str

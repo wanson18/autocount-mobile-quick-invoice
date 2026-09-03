@@ -2,7 +2,6 @@
 
 from datetime import date
 from decimal import Decimal
-
 import pytest
 
 from app.autocount.mapping import (
@@ -84,6 +83,7 @@ def test_maps_confirmed_draft_to_approved_invoice_payload():
             "deliverAddress": "1, Jalan Example\n31450 Ipoh",
             "creditTerm": DEFAULT_CREDIT_TERM,
             "salesLocation": DEFAULT_SALES_LOCATION,
+            "paymentMethod": "CASH",
             "submitEInvoice": False,
             "submitConsolidatedEInvoice": False,
         },
@@ -136,6 +136,42 @@ def test_maps_delivery_address_as_billing_fallback_when_master_billing_is_blank(
     )
 
     assert payload["master"]["address"] == "1, Jalan Example\n31450 Ipoh"
+
+
+def test_maps_cash_tax_entity_and_item_classification_for_quick_invoice():
+    customer = CustomerSummary(
+        id="700-C001",
+        code="700-C001",
+        name="Restoran Contoh",
+        tax_entity="TIN:C23453889090",
+    )
+    products = {
+        "OIL-5KG": ProductSummary(
+            id="OIL-5KG",
+            code="OIL-5KG",
+            name="Cooking Oil 5KG",
+            default_price=Decimal("31.50"),
+            classification_code="022",
+        ),
+        "OIL-2KG": ProductSummary(
+            id="OIL-2KG",
+            code="OIL-2KG",
+            name="Cooking Oil 2KG",
+            default_price=Decimal("13.20"),
+            classification_code="022",
+        ),
+    }
+
+    payload = map_invoice_payload(
+        make_draft(), customer, resolved_address(), products
+    )
+
+    assert payload["master"]["paymentMethod"] == "CASH"
+    assert payload["master"]["taxEntity"] == "TIN:C23453889090"
+    assert [line["classificationCode"] for line in payload["details"]] == [
+        "022",
+        "022",
+    ]
 
 
 def test_default_credit_term_and_sales_location_are_wanson_standard_terms():

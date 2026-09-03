@@ -28,6 +28,7 @@ class CustomerSummary:
     id: str
     code: str
     name: str
+    tax_entity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,7 @@ class ProductSummary:
     code: str
     name: str
     default_price: Decimal
+    classification_code: str | None = None
 
 
 @dataclass(frozen=True)

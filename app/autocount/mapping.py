@@ -21,6 +21,9 @@ from app.models.master_data import (
 #: period: "C.O.D.".
 DEFAULT_CREDIT_TERM = "C.O.D."
 DEFAULT_SALES_LOCATION = "HQ"
+# AutoCount's configured cash payment method. This selects Cash as the
+# payment method; it does not imply that a payment amount has been received.
+DEFAULT_PAYMENT_METHOD = "CASH"
 
 #: AutoCount's Invoice Detail Input Model requires ``accNo`` on every line —
 #: it is the Sales GL account (Chart of Accounts code), NOT a customer/debtor
@@ -84,21 +87,35 @@ def map_invoice_payload(
                 "unitPrice": line.unit_price,
                 # Required per-line Sales GL account; see DEFAULT_ACC_NO above.
                 "accNo": DEFAULT_ACC_NO,
+                # Product classification is sourced from the authoritative
+                # product lookup; never infer it from the item description.
+                **(
+                    {"classificationCode": product.classification_code}
+                    if getattr(product, "classification_code", None)
+                    else {}
+                ),
             }
         )
 
+    master = {
+        "docDate": draft.invoice_date.isoformat(),
+        "debtorCode": draft.customer_id,
+        "debtorName": customer.name,
+        "address": billing_address_text,
+        "deliverAddress": delivery_address_text,
+        "creditTerm": DEFAULT_CREDIT_TERM,
+        "salesLocation": DEFAULT_SALES_LOCATION,
+        "paymentMethod": DEFAULT_PAYMENT_METHOD,
+        "submitEInvoice": False,
+        "submitConsolidatedEInvoice": False,
+    }
+    if getattr(customer, "tax_entity", None):
+        # The debtor's linked tax entity is sourced from the authoritative
+        # customer lookup; never substitute the seller's tax entity here.
+        master["taxEntity"] = customer.tax_entity
+
     return {
-        "master": {
-            "docDate": draft.invoice_date.isoformat(),
-            "debtorCode": draft.customer_id,
-            "debtorName": customer.name,
-            "address": billing_address_text,
-            "deliverAddress": delivery_address_text,
-            "creditTerm": DEFAULT_CREDIT_TERM,
-            "salesLocation": DEFAULT_SALES_LOCATION,
-            "submitEInvoice": False,
-            "submitConsolidatedEInvoice": False,
-        },
+        "master": master,
         "details": details,
         "autoFillOption": {
             "accNo": True,

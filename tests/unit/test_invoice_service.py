@@ -42,12 +42,21 @@ class Response:
 
 class FakeMasterData:
     def __init__(self, *, customer_code="C001"):
-        self.customer = CustomerSummary(customer_code, customer_code, "Customer One")
+        self.customer = CustomerSummary(
+            customer_code,
+            customer_code,
+            "Customer One",
+            tax_entity="TIN:C23453889090",
+        )
         self.address = DeliveryAddress(
             f"{customer_code}:delivery", "Default delivery address", "1 Main Street"
         )
         self.product = ProductSummary(
-            "ITEM-1", "ITEM-1", "Cooking Oil", Decimal("30.00")
+            "ITEM-1",
+            "ITEM-1",
+            "Cooking Oil",
+            Decimal("30.00"),
+            classification_code="022",
         )
         self.customer_code = customer_code
         self.calls = []
@@ -55,6 +64,10 @@ class FakeMasterData:
     async def search_customers(self, company, query):
         self.calls.append(("customer", company, query))
         return [self.customer] if query.lower() in self.customer.code.lower() else []
+
+    async def get_customer(self, company, customer_id):
+        self.calls.append(("customer_detail", company, customer_id))
+        return self.customer
 
     async def get_delivery_addresses(self, company, customer_id):
         self.calls.append(("address", company, customer_id))
@@ -162,10 +175,13 @@ async def test_issue_validates_master_data_creates_invoice_and_records_override(
     assert payload["master"]["debtorName"] == "Customer One"
     assert payload["master"]["creditTerm"] == "C.O.D."
     assert payload["master"]["salesLocation"] == "HQ"
+    assert payload["master"]["paymentMethod"] == "CASH"
+    assert payload["master"]["taxEntity"] == "TIN:C23453889090"
     assert "accNo" not in payload["master"]
     assert payload["details"][0]["unitPrice"] == Decimal("31.50")
     assert payload["details"][0]["accNo"] == "500-0000"
-    assert [call[0] for call in master.calls] == ["customer", "address", "item"]
+    assert payload["details"][0]["classificationCode"] == "022"
+    assert [call[0] for call in master.calls] == ["customer_detail", "address", "item"]
     assert len(client.reads) == 1
     read_company, read_method, read_endpoint, _, read_params = client.reads[0]
     assert read_company is COMPANY

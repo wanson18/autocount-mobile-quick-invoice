@@ -513,6 +513,44 @@ def test_get_item_lookup_and_code_verification():
     assert request.url.params["code"] == "P-00001"
 
 
+def test_get_item_preserves_autocount_classification_code():
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "product": {
+                    "productCode": "P-00001",
+                    "productName": "Hoodie",
+                    "price": "350.00",
+                    "classificationCode": "022",
+                },
+            },
+        )
+
+    client, adapter = make_adapter(handler)
+
+    item = run(client, lambda: adapter.get_item(ENTERPRISE, "P-00001"))
+
+    assert item.classification_code == "022"
+
+
+def test_get_customer_preserves_autocount_tax_entity():
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "accNo": "300-D001",
+                "companyName": "Customer A",
+                "taxEntity": "TIN:C23453889090",
+            },
+        )
+
+    client, adapter = make_adapter(handler)
+    customer = run(client, lambda: adapter.get_customer(ENTERPRISE, "300-D001"))
+
+    assert customer.tax_entity == "TIN:C23453889090"
+
+
 def test_get_item_rejects_mismatched_product_code():
     def handler(request):
         return httpx.Response(
