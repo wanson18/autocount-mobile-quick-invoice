@@ -752,33 +752,6 @@ class AutoCountMasterDataAdapter:
         return value or None
 
     @staticmethod
-    def _optional_text(
-        row: dict[str, Any], camel: str, pascal: str, what: str
-    ) -> str | None:
-        """Extract an optional text field without weakening conflicts.
-
-        Invoice listings are also used by price history, which does not need
-        an address. Missing or blank addresses remain ``None`` so that the
-        reconciliation boundary can reject them explicitly; malformed or
-        conflicting representations still fail closed.
-        """
-        camel_value = row.get(camel)
-        pascal_value = row.get(pascal)
-        if (
-            camel_value is not None
-            and pascal_value is not None
-            and camel_value != pascal_value
-        ):
-            raise AutoCountDataError(f"AutoCount returned conflicting {what} fields")
-        value = camel_value if camel_value is not None else pascal_value
-        if value is None:
-            return None
-        if not isinstance(value, str):
-            raise AutoCountDataError(f"AutoCount returned a malformed {what}")
-        value = value.strip()
-        return value or None
-
-    @staticmethod
     def _validate_query(query: object) -> None:
         if not isinstance(query, str):
             raise ValueError("query must be a string")

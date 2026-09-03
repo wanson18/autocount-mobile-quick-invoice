@@ -66,6 +66,10 @@ class FakeMasterData:
         self.calls.append(("customer", company, query))
         return [self.customer] if query.lower() in self.customer.code.lower() else []
 
+    async def get_customer(self, company, customer_id):
+        self.calls.append(("customer_detail", company, customer_id))
+        return self.customer
+
     async def get_delivery_addresses(self, company, customer_id):
         self.calls.append(("address", company, customer_id))
         return [self.address]
