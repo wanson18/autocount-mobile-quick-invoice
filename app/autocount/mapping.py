@@ -105,9 +105,10 @@ def map_invoice_payload(
         "salesLocation": DEFAULT_SALES_LOCATION,
         "paymentMethod": DEFAULT_PAYMENT_METHOD,
         # AutoCount starts e-Invoice processing from this documented master
-        # flag. The mobile preview currently requests it for every invoice.
+        # flags. The mobile preview currently requests both individual and
+        # consolidated e-Invoice processing for every invoice.
         "submitEInvoice": draft.submit_einvoice,
-        "submitConsolidatedEInvoice": False,
+        "submitConsolidatedEInvoice": True,
     }
     if getattr(customer, "tax_entity", None):
         # The debtor's linked tax entity is sourced from the authoritative

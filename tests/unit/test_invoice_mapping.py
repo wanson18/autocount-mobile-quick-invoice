@@ -85,7 +85,7 @@ def test_maps_confirmed_draft_to_approved_invoice_payload():
             "salesLocation": DEFAULT_SALES_LOCATION,
             "paymentMethod": "CASH",
             "submitEInvoice": False,
-            "submitConsolidatedEInvoice": False,
+            "submitConsolidatedEInvoice": True,
         },
         "details": [
             {
@@ -237,7 +237,7 @@ def test_maps_requested_einvoice_submission_to_autocount_master():
     )
 
     assert payload["master"]["submitEInvoice"] is True
-    assert payload["master"]["submitConsolidatedEInvoice"] is False
+    assert payload["master"]["submitConsolidatedEInvoice"] is True
 
 
 def test_qty_and_price_preserve_exact_decimal_precision_beyond_float_safety():
