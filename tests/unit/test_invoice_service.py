@@ -113,18 +113,6 @@ class FakeClient:
         return self.read_response
 
 
-class FakeEInvoice:
-    def __init__(self, error=None):
-        self.error = error
-        self.calls = []
-
-    async def submit(self, company, invoice_id, invoice_number):
-        self.calls.append((company, invoice_id, invoice_number))
-        if self.error:
-            raise self.error
-        return EInvoiceStatus.SUBMITTED
-
-
 def make_draft(*, submit_einvoice=False, customer_id="C001", key="issue-1"):
     return InvoiceDraftInput(
         company=CompanyKey.SDN_BHD,
@@ -144,13 +132,12 @@ def make_draft(*, submit_einvoice=False, customer_id="C001", key="issue-1"):
     )
 
 
-def service(tmp_path, *, client=None, master=None, einvoice=None):
+def service(tmp_path, *, client=None, master=None):
     return InvoiceService(
         company_resolver=lambda key: COMPANY if key is CompanyKey.SDN_BHD else None,
         master_data=master or FakeMasterData(),
         client=client or FakeClient(),
         requests=RequestRepository(tmp_path / "requests.db"),
-        einvoice=einvoice,
     )
 
 
@@ -266,16 +253,16 @@ async def test_autocount_rejection_marks_request_failed_and_does_not_return_succ
 
 
 @pytest.mark.asyncio
-async def test_einvoice_failure_is_separate_from_successful_invoice(tmp_path):
-    einvoice = FakeEInvoice(error=RuntimeError("taxpayer data incomplete"))
-    result = await service(tmp_path, einvoice=einvoice).issue(
+async def test_einvoice_request_is_embedded_in_autocount_create(tmp_path):
+    client = FakeClient()
+    result = await service(tmp_path, client=client).issue(
         make_draft(submit_einvoice=True)
     )
 
     assert result.invoice_id == "inv-1"
-    assert result.einvoice.status is EInvoiceStatus.ACTION_REQUIRED
-    assert result.einvoice.error_message == "taxpayer data incomplete"
-    assert len(einvoice.calls) == 1
+    assert result.einvoice.status is EInvoiceStatus.PENDING
+    assert result.einvoice.error_message is None
+    assert client.writes[0][3]["master"]["submitEInvoice"] is True
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,7 @@ Custom GPT Action OpenAPI schema.
 """
 
 from decimal import Decimal
+from pathlib import Path
 
 import httpx
 import pytest
@@ -244,6 +245,15 @@ def test_issue_invoice_returns_created_result(api):
         "status": EInvoiceStatus.NOT_REQUESTED.value,
         "error_message": None,
     }
+
+
+def test_mobile_issue_request_enables_native_einvoice():
+    script = (Path(__file__).parents[2] / "app" / "static" / "app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert "submit_einvoice: true" in script
+    assert "submit_einvoice: false" not in script
 
 
 def test_issue_invoice_same_key_replays_without_second_create(api):

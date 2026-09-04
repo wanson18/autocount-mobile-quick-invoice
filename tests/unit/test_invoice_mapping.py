@@ -229,11 +229,15 @@ def test_rejects_missing_or_mismatched_resolved_product():
         map_invoice_payload(draft, resolved_customer(), resolved_address(), products)
 
 
-def test_submit_einvoice_cannot_be_smuggled_into_this_approval_flow():
+def test_maps_requested_einvoice_submission_to_autocount_master():
     draft = make_draft().model_copy(update={"submit_einvoice": True})
 
-    with pytest.raises(ValueError, match="e-Invoice"):
-        map_invoice_payload(draft, resolved_customer(), resolved_address(), resolved_products())
+    payload = map_invoice_payload(
+        draft, resolved_customer(), resolved_address(), resolved_products()
+    )
+
+    assert payload["master"]["submitEInvoice"] is True
+    assert payload["master"]["submitConsolidatedEInvoice"] is False
 
 
 def test_qty_and_price_preserve_exact_decimal_precision_beyond_float_safety():

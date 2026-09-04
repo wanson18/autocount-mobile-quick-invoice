@@ -923,6 +923,9 @@
         '<div class="status-title">Invoice issued</div>' +
         '<div class="status-detail">Invoice <b>' + escapeHtml(r.invoice_number) + '</b> was created in ' +
         escapeHtml(state.company.name) + '.</div>' +
+        '<div class="status-note">e-Invoice request: ' +
+        escapeHtml(r.einvoice && r.einvoice.status ? r.einvoice.status : "pending") +
+        '. Check AutoCount Cloud for the validation result.</div>' +
         '<div class="result-actions">' +
         '<button class="btn btn-primary" id="open-cloud-report-btn">Open Cloud Report</button>' +
         '</div>' +
@@ -1012,7 +1015,9 @@
         unit_price: String(l.unit_price),
         original_unit_price: String(l.original_unit_price),
       })),
-      submit_einvoice: false,
+      // Preview trial: request AutoCount e-Invoice submission for every
+      // invoice. This is option 1 and intentionally remains preview-only.
+      submit_einvoice: true,
       idempotency_key: state.idempotencyKey,
     };
 

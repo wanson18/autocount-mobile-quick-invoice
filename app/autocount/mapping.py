@@ -45,15 +45,13 @@ def map_invoice_payload(
     delivery_address: DeliveryAddress,
     products: Mapping[str, ProductSummary],
 ) -> dict[str, Any]:
-    """Build the approved, non-e-Invoice AutoCount payload.
+    """Build the approved AutoCount payload, including the e-Invoice request.
 
     Customer, address, and products must already have been resolved from the
     selected server-side account book. The confirmed ``unit_price`` is sent to
     AutoCount; ``original_unit_price`` remains audit metadata outside the
     accounting payload.
     """
-    if draft.submit_einvoice:
-        raise ValueError("e-Invoice submission is a separate workflow")
     if customer.id != draft.customer_id or customer.code != draft.customer_id:
         raise ValueError("resolved customer does not match the confirmed draft")
     if delivery_address.id != draft.delivery_address_id:
@@ -106,7 +104,9 @@ def map_invoice_payload(
         "creditTerm": DEFAULT_CREDIT_TERM,
         "salesLocation": DEFAULT_SALES_LOCATION,
         "paymentMethod": DEFAULT_PAYMENT_METHOD,
-        "submitEInvoice": False,
+        # AutoCount starts e-Invoice processing from this documented master
+        # flag. The mobile preview currently requests it for every invoice.
+        "submitEInvoice": draft.submit_einvoice,
         "submitConsolidatedEInvoice": False,
     }
     if getattr(customer, "tax_entity", None):

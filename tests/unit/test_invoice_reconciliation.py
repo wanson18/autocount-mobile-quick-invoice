@@ -97,15 +97,6 @@ class FakeClient:
         return Response({"data": {"id": "inv-1", "docNo": "INV-2026-0001"}})
 
 
-class FakeEInvoice:
-    def __init__(self):
-        self.calls = []
-
-    async def submit(self, company, invoice_id, invoice_number):
-        self.calls.append((company, invoice_id, invoice_number))
-        return EInvoiceStatus.SUBMITTED
-
-
 def make_draft(*, submit_einvoice=False, key="issue-1"):
     return InvoiceDraftInput(
         company=CompanyKey.SDN_BHD,
@@ -148,13 +139,12 @@ def matching_invoice(
     )
 
 
-def service(tmp_path, *, master=None, client=None, einvoice=None):
+def service(tmp_path, *, master=None, client=None):
     return InvoiceService(
         company_resolver=lambda key: COMPANY if key is CompanyKey.SDN_BHD else None,
         master_data=master or FakeMasterData(),
         client=client or FakeClient(),
         requests=RequestRepository(tmp_path / "requests.db"),
-        einvoice=einvoice,
     )
 
 
@@ -311,16 +301,14 @@ async def test_reconcile_searches_window_around_ambiguity_timestamp(tmp_path):
 async def test_reconcile_requests_einvoice_for_resolved_invoice(tmp_path):
     client = FakeClient(error=AutoCountAmbiguousWriteError("timed out"))
     master = FakeMasterData(invoices=[matching_invoice(doc_key="9001", doc_no="INV-2026-0001")])
-    einvoice = FakeEInvoice()
-    invoice_service = service(tmp_path, master=master, client=client, einvoice=einvoice)
+    invoice_service = service(tmp_path, master=master, client=client)
     draft = make_draft(submit_einvoice=True)
 
     await ambiguous_first_tap(invoice_service, draft)
     result = await invoice_service.issue(draft)
 
     assert result.invoice_id == "9001"
-    assert result.einvoice.status is EInvoiceStatus.SUBMITTED
-    assert einvoice.calls == [(COMPANY, "9001", "INV-2026-0001")]
+    assert result.einvoice.status is EInvoiceStatus.PENDING
 
 
 @pytest.mark.asyncio

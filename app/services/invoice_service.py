@@ -100,12 +100,6 @@ class AutoCountWritePort(Protocol):
     ) -> Any: ...
 
 
-class EInvoicePort(Protocol):
-    async def submit(
-        self, company: CompanyConfig, invoice_id: str, invoice_number: str
-    ) -> str | "EInvoiceStatus": ...
-
-
 class InvoiceServiceError(Exception):
     """Base error for invoice service failures."""
 
@@ -165,13 +159,11 @@ class InvoiceService:
         master_data: MasterDataPort,
         client: AutoCountWritePort,
         requests: RequestRepository,
-        einvoice: EInvoicePort | None = None,
     ) -> None:
         self.company_resolver = company_resolver
         self.master_data = master_data
         self.client = client
         self.requests = requests
-        self.einvoice = einvoice
 
     async def issue(self, draft: InvoiceDraftInput) -> InvoiceCreateResult:
         company = self._resolve_company(draft)
@@ -195,8 +187,7 @@ class InvoiceService:
                 company, draft.customer_id, draft.delivery_address_id
             )
             products = await self._resolve_products(company, draft)
-            accounting_draft = draft.model_copy(update={"submit_einvoice": False})
-            payload = map_invoice_payload(accounting_draft, customer, address, products)
+            payload = map_invoice_payload(draft, customer, address, products)
             response = await self.client.write(
                 company, "POST", "invoice", json=payload
             )
@@ -265,9 +256,7 @@ class InvoiceService:
         self.requests.record_price_overrides(
             draft.idempotency_key, invoice_id, price_overrides
         )
-        einvoice_result = await self._request_einvoice(
-            draft, company, invoice_id, invoice_number
-        )
+        einvoice_result = await self._request_einvoice(draft)
         return self._result(
             draft,
             invoice_id,
@@ -355,24 +344,15 @@ class InvoiceService:
         return expected == actual
 
     async def _request_einvoice(
-        self,
-        draft: InvoiceDraftInput,
-        company: CompanyConfig,
-        invoice_id: str,
-        invoice_number: str,
+        self, draft: InvoiceDraftInput
     ) -> EInvoiceResult:
         if not draft.submit_einvoice:
             return EInvoiceResult(EInvoiceStatus.NOT_REQUESTED)
-        if self.einvoice is None:
-            return EInvoiceResult(
-                EInvoiceStatus.UNSUPPORTED,
-                "AutoCount e-Invoice processor is not configured",
-            )
-        try:
-            status = await self.einvoice.submit(company, invoice_id, invoice_number)
-            return EInvoiceResult(EInvoiceStatus(status))
-        except Exception as exc:
-            return EInvoiceResult(EInvoiceStatus.ACTION_REQUIRED, str(exc))
+        # ``submitEInvoice`` is sent in the same AutoCount Create Invoice
+        # request. Do not call the legacy injected port here: doing so would
+        # submit the same invoice twice. AutoCount may validate asynchronously,
+        # so the result is pending until its invoice view is read back.
+        return EInvoiceResult(EInvoiceStatus.PENDING)
 
     @staticmethod
     def _request_hash(draft: InvoiceDraftInput) -> str:
