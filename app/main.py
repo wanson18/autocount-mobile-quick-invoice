@@ -14,7 +14,9 @@ calling it.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Callable
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -118,139 +120,80 @@ async def validation_error_handler(
     )
 
 
-@app.exception_handler(InvoiceValidationError)
-async def invoice_validation_error_handler(
-    request: Request, exc: InvoiceValidationError
-) -> JSONResponse:
-    return _error(400, "invalid_invoice", str(exc))
+@dataclass(frozen=True)
+class _ErrorResponse:
+    """The structured JSON error one domain exception maps to.
+
+    ``extra`` builds the response's additional fields from the exception
+    instance (``candidates``, ``status_code``, ``retryable``); ``None`` adds
+    none.
+    """
+
+    status: int
+    code: str
+    extra: Callable[[Any], dict[str, Any]] | None = None
 
 
-@app.exception_handler(InvoiceNotFoundError)
-async def invoice_not_found_error_handler(
-    request: Request, exc: InvoiceNotFoundError
-) -> JSONResponse:
-    return _error(404, "invoice_not_found", str(exc))
+# The single source of truth mapping domain exceptions to HTTP error
+# responses. FastAPI dispatches on the first registered handler whose class
+# matches the raised exception, so subclasses must appear before their base:
+# each specific edit failure keeps its own status instead of collapsing into
+# InvoiceEditError's 400, and each specific issue failure keeps its own status
+# instead of InvoiceServiceError's 409. Each edit failure also gets its own
+# code so the client can tell "reopen it" from "this is locked".
+_ERROR_RESPONSES: tuple[tuple[type[Exception], _ErrorResponse], ...] = (
+    (InvoiceValidationError, _ErrorResponse(400, "invalid_invoice")),
+    (InvoiceNotFoundError, _ErrorResponse(404, "invoice_not_found")),
+    (InvoiceNotEditableError, _ErrorResponse(409, "invoice_not_editable")),
+    (InvoiceChangedError, _ErrorResponse(409, "invoice_changed")),
+    (InvoiceEditUnconfirmedError, _ErrorResponse(409, "edit_unconfirmed")),
+    (InvoiceEditError, _ErrorResponse(400, "invalid_invoice")),
+    (InvoiceIssuePendingError, _ErrorResponse(409, "invoice_pending")),
+    (
+        InvoiceReconciliationError,
+        _ErrorResponse(
+            409,
+            "invoice_reconciliation_required",
+            extra=lambda exc: {"candidates": list(exc.candidates)},
+        ),
+    ),
+    (InvoiceServiceError, _ErrorResponse(409, "invoice_request_failed")),
+    (IdempotencyConflictError, _ErrorResponse(409, "idempotency_conflict")),
+    (
+        AutoCountRejectedError,
+        _ErrorResponse(
+            502,
+            "autocount_rejected",
+            extra=lambda exc: {"status_code": exc.status_code},
+        ),
+    ),
+    (
+        AutoCountAmbiguousWriteError,
+        _ErrorResponse(
+            502, "autocount_ambiguous_write", extra=lambda exc: {"retryable": True}
+        ),
+    ),
+    (AutoCountTransportError, _ErrorResponse(502, "autocount_unreachable")),
+    (AutoCountDataError, _ErrorResponse(502, "autocount_data_error")),
+    (AutoCountUnsupportedError, _ErrorResponse(501, "unsupported")),
+    (AutoCountConfigError, _ErrorResponse(500, "server_configuration_error")),
+    (AutoCountEndpointError, _ErrorResponse(500, "server_configuration_error")),
+    (CompanyConfigError, _ErrorResponse(500, "server_configuration_error")),
+)
 
 
-# Each edit failure gets its own code so the client can tell "reopen it" from
-# "this is locked". FastAPI dispatches on the exact exception class, and the
-# subclasses are registered ahead of the InvoiceEditError base below, so each
-# keeps its own status rather than collapsing into the catch-all 400.
-@app.exception_handler(InvoiceNotEditableError)
-async def invoice_not_editable_error_handler(
-    request: Request, exc: InvoiceNotEditableError
-) -> JSONResponse:
-    return _error(409, "invoice_not_editable", str(exc))
+def _domain_error_handler(
+    response: _ErrorResponse,
+) -> Callable[[Request, Exception], JSONResponse]:
+    async def handler(request: Request, exc: Exception) -> JSONResponse:
+        extra = response.extra(exc) if response.extra is not None else {}
+        return _error(response.status, response.code, str(exc), **extra)
+
+    return handler
 
 
-@app.exception_handler(InvoiceChangedError)
-async def invoice_changed_error_handler(
-    request: Request, exc: InvoiceChangedError
-) -> JSONResponse:
-    return _error(409, "invoice_changed", str(exc))
-
-
-@app.exception_handler(InvoiceEditUnconfirmedError)
-async def invoice_edit_unconfirmed_error_handler(
-    request: Request, exc: InvoiceEditUnconfirmedError
-) -> JSONResponse:
-    return _error(409, "edit_unconfirmed", str(exc))
-
-
-@app.exception_handler(InvoiceEditError)
-async def invoice_edit_error_handler(
-    request: Request, exc: InvoiceEditError
-) -> JSONResponse:
-    return _error(400, "invalid_invoice", str(exc))
-
-
-@app.exception_handler(InvoiceIssuePendingError)
-async def invoice_pending_error_handler(
-    request: Request, exc: InvoiceIssuePendingError
-) -> JSONResponse:
-    return _error(409, "invoice_pending", str(exc))
-
-
-@app.exception_handler(InvoiceReconciliationError)
-async def invoice_reconciliation_error_handler(
-    request: Request, exc: InvoiceReconciliationError
-) -> JSONResponse:
-    return _error(
-        409,
-        "invoice_reconciliation_required",
-        str(exc),
-        candidates=list(exc.candidates),
-    )
-
-
-@app.exception_handler(InvoiceServiceError)
-async def invoice_service_error_handler(
-    request: Request, exc: InvoiceServiceError
-) -> JSONResponse:
-    return _error(409, "invoice_request_failed", str(exc))
-
-
-@app.exception_handler(IdempotencyConflictError)
-async def idempotency_conflict_error_handler(
-    request: Request, exc: IdempotencyConflictError
-) -> JSONResponse:
-    return _error(409, "idempotency_conflict", str(exc))
-
-
-@app.exception_handler(AutoCountRejectedError)
-async def autocount_rejected_error_handler(
-    request: Request, exc: AutoCountRejectedError
-) -> JSONResponse:
-    return _error(502, "autocount_rejected", str(exc), status_code=exc.status_code)
-
-
-@app.exception_handler(AutoCountAmbiguousWriteError)
-async def autocount_ambiguous_error_handler(
-    request: Request, exc: AutoCountAmbiguousWriteError
-) -> JSONResponse:
-    return _error(502, "autocount_ambiguous_write", str(exc), retryable=True)
-
-
-@app.exception_handler(AutoCountTransportError)
-async def autocount_transport_error_handler(
-    request: Request, exc: AutoCountTransportError
-) -> JSONResponse:
-    return _error(502, "autocount_unreachable", str(exc))
-
-
-@app.exception_handler(AutoCountDataError)
-async def autocount_data_error_handler(
-    request: Request, exc: AutoCountDataError
-) -> JSONResponse:
-    return _error(502, "autocount_data_error", str(exc))
-
-
-@app.exception_handler(AutoCountUnsupportedError)
-async def autocount_unsupported_error_handler(
-    request: Request, exc: AutoCountUnsupportedError
-) -> JSONResponse:
-    return _error(501, "unsupported", str(exc))
-
-
-@app.exception_handler(AutoCountConfigError)
-async def autocount_config_error_handler(
-    request: Request, exc: AutoCountConfigError
-) -> JSONResponse:
-    return _error(500, "server_configuration_error", str(exc))
-
-
-@app.exception_handler(AutoCountEndpointError)
-async def autocount_endpoint_error_handler(
-    request: Request, exc: AutoCountEndpointError
-) -> JSONResponse:
-    return _error(500, "server_configuration_error", str(exc))
-
-
-@app.exception_handler(CompanyConfigError)
-async def company_config_error_handler(
-    request: Request, exc: CompanyConfigError
-) -> JSONResponse:
-    return _error(500, "server_configuration_error", str(exc))
+for _exception_class, _response in _ERROR_RESPONSES:
+    app.add_exception_handler(_exception_class, _domain_error_handler(_response))
 
 
 @app.exception_handler(Exception)
