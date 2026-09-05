@@ -19,41 +19,18 @@ result screen's Cloud handoff but lives on the Recent Invoice detail screen:
   IDs that do not collide with the post-issue result screen's controls.
 """
 
-import re
-
 import pytest
 
-APP_JS = "app/static/app.js"
-
-
-def _read_app_js():
-    with open(APP_JS, "r", encoding="utf-8") as fh:
-        return fh.read()
-
-
-def _render_invoice_detail_body(source):
-    match = re.search(
-        r"function renderInvoiceDetail\(\)\s*\{(.*?)\n  \}",
-        source,
-        re.DOTALL,
-    )
-    assert match, "renderInvoiceDetail() not found in app.js"
-    return match.group(1)
-
-
-def _render_result_body(source):
-    match = re.search(
-        r"function renderResultScreen\(\)\s*\{(.*?)\n  \}",
-        source,
-        re.DOTALL,
-    )
-    assert match, "renderResultScreen() not found in app.js"
-    return match.group(1)
+from tests.unit.app_js_source import (
+    read_app_js,
+    render_invoice_detail_body,
+    render_result_body,
+)
 
 
 @pytest.fixture
 def detail_body():
-    return _render_invoice_detail_body(_read_app_js())
+    return render_invoice_detail_body(read_app_js())
 
 
 def test_detail_opens_same_origin_cloud_report_route_in_new_tab(detail_body):
@@ -103,7 +80,7 @@ def test_detail_buttons_scoped_and_non_colliding_ids(detail_body):
 
 
 def test_result_screen_has_no_copy_button_or_clipboard_handler():
-    result_body = _render_result_body(_read_app_js())
+    result_body = render_result_body(read_app_js())
     assert "Copy invoice number" not in result_body
     assert "copy-invoice-number-btn" not in result_body
     assert "navigator.clipboard" not in result_body

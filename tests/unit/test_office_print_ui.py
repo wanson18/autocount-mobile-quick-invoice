@@ -4,10 +4,10 @@ Print via Open Cloud Report (and the Epson app). The phone must not queue
 jobs for a Windows print agent. Open Cloud Report, Edit lines, and Back stay.
 """
 
-from tests.unit.test_recent_invoice_detail_cloud import (
-    _read_app_js,
-    _render_invoice_detail_body,
-    _render_result_body,
+from tests.unit.app_js_source import (
+    read_app_js,
+    render_invoice_detail_body,
+    render_result_body,
 )
 
 
@@ -17,7 +17,7 @@ def _read_index_html():
 
 
 def test_detail_keeps_cloud_report_and_edit_without_office_print():
-    body = _render_invoice_detail_body(_read_app_js())
+    body = render_invoice_detail_body(read_app_js())
     html = _read_index_html()
     assert 'id="detail-open-cloud-report-btn">Open Cloud Report</button>' in body
     assert "Edit lines" in body
@@ -31,7 +31,7 @@ def test_detail_keeps_cloud_report_and_edit_without_office_print():
 
 
 def test_result_keeps_cloud_report_without_office_print():
-    body = _render_result_body(_read_app_js())
+    body = render_result_body(read_app_js())
     assert 'id="open-cloud-report-btn">Open Cloud Report</button>' in body
     assert "Print</button>" not in body
     assert "print-office-btn" not in body
@@ -40,7 +40,7 @@ def test_result_keeps_cloud_report_without_office_print():
 
 
 def test_phone_does_not_queue_office_print_jobs():
-    source = _read_app_js()
+    source = read_app_js()
     assert "wireOfficePrint" not in source
     assert "/print" not in source
     assert "apiPostEmpty" not in source
@@ -51,7 +51,7 @@ def test_phone_does_not_queue_office_print_jobs():
 
 
 def test_browser_source_never_embeds_cloud_url_or_printer():
-    source = _read_app_js().lower()
+    source = read_app_js().lower()
     html = _read_index_html().lower()
     for blob in (source, html):
         assert "accounting-report.autocountcloud.com" not in blob

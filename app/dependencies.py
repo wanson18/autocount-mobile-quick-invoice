@@ -17,27 +17,21 @@ from pathlib import Path
 
 from app.autocount import AutoCountClient
 from app.autocount.adapter import AutoCountMasterDataAdapter
-from app.config import get_company
+from app.config import (
+    DEFAULT_DB_PATH,
+    ENV_API_KEY,
+    ENV_DB_PATH,
+    ENV_DATABASE_URL,
+    ENV_KEY_ID,
+    ENV_POSTGRES_URL,
+    get_company,
+)
 from app.repositories.request_repository import (
     RequestRepository,
     RequestRepositoryPort,
 )
 from app.services.invoice_edit_service import InvoiceEditService
 from app.services.invoice_service import InvoiceService
-
-ENV_KEY_ID = "AUTOCOUNT_API_KEY_ID"
-ENV_API_KEY = "AUTOCOUNT_API_KEY"
-ENV_DB_PATH = "INVOICE_REQUESTS_DB"
-DEFAULT_DB_PATH = "data/invoice_requests.db"
-
-# Vercel Postgres (and most managed Postgres providers) expose the connection
-# string as POSTGRES_URL; DATABASE_URL is the more general convention. Either
-# one being set switches the idempotency repository from SQLite to Postgres —
-# required on serverless platforms where the local filesystem is ephemeral
-# and a SQLite file would silently lose duplicate-protection state between
-# invocations.
-ENV_POSTGRES_URL = "POSTGRES_URL"
-ENV_DATABASE_URL = "DATABASE_URL"
 
 _client_instance: AutoCountClient | None = None
 _master_data_instance: AutoCountMasterDataAdapter | None = None

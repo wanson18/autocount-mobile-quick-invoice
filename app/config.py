@@ -33,6 +33,17 @@ ENV_API_KEY_ENTERPRISE = "AUTOCOUNT_API_KEY_WANSON_ENTERPRISE"
 ENV_KEY_ID_SDN_BHD = "AUTOCOUNT_KEY_ID_WANSON_SDN_BHD"
 ENV_API_KEY_SDN_BHD = "AUTOCOUNT_API_KEY_WANSON_SDN_BHD"
 
+# Client-wide AutoCount credentials (a company's per-company pair above falls
+# back to these when unset) and the idempotency-repository storage locations.
+# Defined here so app/config.py is the single home for environment variable
+# names; app/dependencies.py and the diagnostic scripts import them.
+ENV_KEY_ID = "AUTOCOUNT_API_KEY_ID"
+ENV_API_KEY = "AUTOCOUNT_API_KEY"
+ENV_DB_PATH = "INVOICE_REQUESTS_DB"
+DEFAULT_DB_PATH = "data/invoice_requests.db"
+ENV_POSTGRES_URL = "POSTGRES_URL"
+ENV_DATABASE_URL = "DATABASE_URL"
+
 # Verified AutoCount Cloud report identities for the invoice report, scoped to
 # the selected company: the server resolves the CompanyKey to its own account
 # book (above) and its own report name (below), substituting the

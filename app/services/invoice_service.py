@@ -56,10 +56,6 @@ class MasterDataPort(Protocol):
         self, company: CompanyConfig, customer_id: str
     ) -> CustomerSummary: ...
 
-    async def search_customers(
-        self, company: CompanyConfig, query: str
-    ) -> list[CustomerSummary]: ...
-
     async def get_delivery_addresses(
         self, company: CompanyConfig, customer_id: str
     ) -> list[DeliveryAddress]: ...
