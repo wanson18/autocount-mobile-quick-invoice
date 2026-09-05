@@ -1,10 +1,19 @@
 """Read-only master-data adapter over the AutoCount Cloud Accounting API.
 
 Every call goes through ``AutoCountClient.read``, so the server-side
-``CompanyConfig`` selects the account book; results are never cached, merged,
-or reused across companies. The AutoCount endpoints provide no documented
-server-side free-text search, so listing pages are consumed locally and
-filtered with a trimmed, case-insensitive substring match against code or name.
+``CompanyConfig`` selects the account book; no read is ever shared across
+companies. The AutoCount endpoints provide no documented server-side
+free-text search, so listing pages are consumed locally and filtered with a
+trimmed, case-insensitive substring match against code or name.
+
+Caching is deliberately narrow. The two search-assist listings (customers,
+products) are cached briefly per account book — see ``_cached_listing`` —
+because their results only feed suggestions; the issue path re-validates every
+selected customer and item against AutoCount live before an invoice is built,
+so a cached suggestion can never reach an invoice payload. Identity and
+currency-bearing reads (debtor detail, product detail, invoice reads,
+invoice listings, price history) are never cached: they must reflect the
+account book right now.
 
 Normalisation and isolation:
 
@@ -29,9 +38,11 @@ routes, or UI work lives here.
 from __future__ import annotations
 
 import decimal
+import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Callable
+from typing import Any
 
 from app.autocount.client import AutoCountClient
 from app.autocount.errors import AutoCountDataError, AutoCountUnsupportedError
@@ -57,26 +68,65 @@ _ACTIVE_STATUSES = {
 #: pricing for the confirmation preview.
 PRICE_HISTORY_WINDOW_DAYS = 90
 
+#: How long a full customer/product search listing stays cached per account
+#: book. AutoCount documents no server-side text search for these listings,
+#: so every uncached search pages the whole listing one HTTPS round trip per
+#: 100 records; the TTL turns that cost into one payment per minute instead
+#: of one per keystroke. Staleness is bounded to suggestions — see
+#: ``_cached_listing``.
+SEARCH_CACHE_TTL_SECONDS = 60
+
+#: Debtor listing field projection for customer search: search renders the
+#: code and name only, and the documented ``field`` parameter drops the rest
+#: (address, credit term, ...) from each page's payload. Names follow the
+#: documented debtor data model and are case-insensitive.
+_CUSTOMER_SEARCH_FIELDS = ["accNo", "companyName"]
+
 
 class AutoCountMasterDataAdapter:
     """Fetches and normalises AutoCount master data for one account book per call."""
 
-    def __init__(self, client: AutoCountClient) -> None:
+    def __init__(
+        self,
+        client: AutoCountClient,
+        *,
+        search_cache_ttl_seconds: float = SEARCH_CACHE_TTL_SECONDS,
+    ) -> None:
         self._client = client
+        self._search_cache_ttl_seconds = search_cache_ttl_seconds
+        # Search-assist listings per account book: key is (book id, kind),
+        # value is (expiry monotonic timestamp, normalised summaries).
+        self._search_cache: dict[tuple[str, str], tuple[float, list[Any]]] = {}
 
     async def search_customers(
         self, company: CompanyConfig, query: str
     ) -> list[CustomerSummary]:
-        """All active customers whose code or name contains ``query`` (case-insensitive)."""
+        """All active customers whose code or name contains ``query`` (case-insensitive).
+
+        Served from the per-book search cache when it is fresh (see
+        ``_cached_listing``); the listing itself requests only the fields
+        search renders.
+        """
         self._validate_query(query)
-        summaries = await self._listing(
-            company,
-            "GET",
-            "debtor/listing",
-            params_for=lambda page: {"page": page, "activeOnly": "true"},
-            body_for=None,
-            extract=self._customer_row,
-        )
+
+        def params_for(page: int) -> dict[str, Any]:
+            return {
+                "page": page,
+                "activeOnly": "true",
+                "field": _CUSTOMER_SEARCH_FIELDS,
+            }
+
+        async def fetch() -> list[CustomerSummary]:
+            return await self._listing(
+                company,
+                "GET",
+                "debtor/listing",
+                params_for=params_for,
+                body_for=None,
+                extract=self._customer_row,
+            )
+
+        summaries = await self._cached_listing(company, "customers", fetch)
         return self._filter(summaries, query)
 
     async def get_delivery_addresses(
@@ -142,20 +192,27 @@ class AutoCountMasterDataAdapter:
     async def search_items(
         self, company: CompanyConfig, query: str
     ) -> list[ProductSummary]:
-        """All active products whose code or name contains ``query`` (case-insensitive)."""
+        """All active products whose code or name contains ``query`` (case-insensitive).
+
+        Served from the per-book search cache when it is fresh (see
+        ``_cached_listing``).
+        """
         self._validate_query(query)
 
         def body_for(page: int) -> dict[str, Any]:
             return {"page": page, "filter": {"statuses": _ACTIVE_STATUSES}}
 
-        summaries = await self._listing(
-            company,
-            "POST",
-            "product/listing",
-            params_for=None,
-            body_for=body_for,
-            extract=self._product_row,
-        )
+        async def fetch() -> list[ProductSummary]:
+            return await self._listing(
+                company,
+                "POST",
+                "product/listing",
+                params_for=None,
+                body_for=body_for,
+                extract=self._product_row,
+            )
+
+        summaries = await self._cached_listing(company, "products", fetch)
         return self._filter(summaries, query)
 
     async def search_invoices(
@@ -368,6 +425,36 @@ class AutoCountMasterDataAdapter:
                 "AutoCount returned a different product for the requested item"
             )
         return self._product_summary(product)
+
+    async def _cached_listing(
+        self,
+        company: CompanyConfig,
+        kind: str,
+        fetch: Callable[[], Awaitable[list[Any]]],
+    ) -> list[Any]:
+        """Run ``fetch`` once per account book and serve it from cache for the TTL.
+
+        Search suggestions are advisory: the issue path re-validates every
+        selected customer and item against AutoCount live (``get_customer`` /
+        ``get_item``), so the worst a stale entry can do is omit a record
+        added moments ago from the suggestion list — it can never put stale
+        data on an invoice. Only a fully consumed, validated listing is
+        cached; a failed or rejected fetch caches nothing, so error behaviour
+        is unchanged. Keyed by account-book id (not company key) so the cache
+        can never bridge two account books, even if configuration changed
+        underneath a long-lived adapter instance.
+        """
+        cache_key = (company.account_book_id, kind)
+        cached = self._search_cache.get(cache_key)
+        now = time.monotonic()
+        if cached is not None and now < cached[0]:
+            return cached[1]
+        summaries = await fetch()
+        self._search_cache[cache_key] = (
+            now + self._search_cache_ttl_seconds,
+            summaries,
+        )
+        return summaries
 
     async def _get_debtor(
         self, company: CompanyConfig, customer_id: str
