@@ -113,11 +113,14 @@
     return err;
   }
 
-  let debounceTimer = null;
   function debounce(fn, ms) {
+    // The timer lives in this closure, not on the module: the customer and
+    // item searches debounce independently, so typing in one no longer
+    // cancels a pending keystroke in the other.
+    let timer = null;
     return function (...args) {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => fn(...args), ms);
+      clearTimeout(timer);
+      timer = setTimeout(() => fn(...args), ms);
     };
   }
 
@@ -256,13 +259,19 @@
   // endpoint or markup change lands on both at once. Returns a handle so a
   // caller can close the picker on navigation.
   function wireItemPicker(el, onPick) {
+    // Each keystroke's response is stamped with a sequence number; a response
+    // that arrives after a newer keystroke was already issued is stale and
+    // must not overwrite the newer results on screen.
+    let searchSeq = 0;
     const search = debounce(async function (q) {
       if (!state.company) return;
+      const seq = ++searchSeq;
       el.list.innerHTML = '<div class="empty-hint">Searching...</div>';
       try {
         const results = await apiGet(
           "/" + state.company.key + "/products?q=" + encodeURIComponent(q)
         );
+        if (seq !== searchSeq) return;
         el.list.innerHTML = "";
         if (!results.length) {
           el.list.innerHTML = '<div class="empty-hint">No items found</div>';
@@ -282,6 +291,7 @@
           el.list.appendChild(item);
         });
       } catch (e) {
+        if (seq !== searchSeq) return;
         el.list.innerHTML = "";
         showBanner("Item search failed: " + e.message);
       }
@@ -692,11 +702,16 @@
     customerSearchInput.focus();
   });
 
+  // Same stale-response guard as the item picker: only the newest
+  // keystroke's response may render.
+  let customerSearchSeq = 0;
   const doCustomerSearch = debounce(async function (q) {
     if (!state.company) return;
+    const seq = ++customerSearchSeq;
     customerListEl.innerHTML = '<div class="empty-hint">Searching...</div>';
     try {
       const results = await apiGet("/" + state.company.key + "/customers?q=" + encodeURIComponent(q));
+      if (seq !== customerSearchSeq) return;
       customerListEl.innerHTML = "";
       if (results.length === 0) {
         customerListEl.innerHTML = '<div class="empty-hint">No customers found</div>';
@@ -710,6 +725,7 @@
         customerListEl.appendChild(item);
       });
     } catch (e) {
+      if (seq !== customerSearchSeq) return;
       customerListEl.innerHTML = "";
       showBanner("Customer search failed: " + e.message);
     }
