@@ -1,7 +1,16 @@
-"""Idempotency repository for invoice issue requests.
+"""Shared idempotency contract and the SQLite implementation.
 
 Backs the idempotent issue flow with a SQLite ``invoice_requests`` table as
-specified in the implementation plan. Rules:
+specified in the implementation plan. This module also owns the contract both
+storage backends share — status enum, exceptions, request record, row
+mapping, and the ``RequestRepositoryPort`` protocol — so ``InvoiceService``
+and the FastAPI error handlers compare against exactly one set of symbols
+regardless of which backend ``app.dependencies`` wires in. The Postgres
+implementation (``app.repositories.postgres_request_repository``) imports
+these instead of defining its own, which is what makes a replay and a
+conflict behave identically on either backend.
+
+Rules:
 
 - Same idempotency key plus the same request body returns the stored result.
 - Same idempotency key with a different request body is rejected with
@@ -27,7 +36,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from app.models.company import CompanyKey
 
@@ -87,8 +96,79 @@ class InvoiceRequest:
     is_new: bool = False
 
 
-def _now() -> str:
+def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def to_request(row: Any) -> InvoiceRequest:
+    """Build the shared record from one stored row (SQLite or Postgres).
+
+    Works with anything supporting ``row["column"]`` subscripting, which
+    covers both ``sqlite3.Row`` and psycopg's ``dict_row``. An unknown company
+    or status fails closed rather than producing a record the service cannot
+    interpret.
+    """
+    try:
+        company = CompanyKey(row["company"])
+        status = RequestStatus(row["status"])
+    except ValueError:
+        raise IdempotencyError(
+            "stored idempotency row has an unknown company or status"
+        ) from None
+    return InvoiceRequest(
+        idempotency_key=row["idempotency_key"],
+        company=company,
+        request_hash=row["request_hash"],
+        status=status,
+        autocount_invoice_id=row["autocount_invoice_id"],
+        autocount_invoice_number=row["autocount_invoice_number"],
+        error_message=row["error_message"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+class RequestRepositoryPort(Protocol):
+    """The storage contract ``InvoiceService`` depends on.
+
+    Both the SQLite and Postgres repositories satisfy this structurally; the
+    service and ``app.dependencies`` accept either one.
+    """
+
+    def begin(self, key: str, company: CompanyKey, request_hash: str) -> InvoiceRequest:
+        """Insert a pending row, or return the stored row for the same request."""
+        ...
+
+    def get(self, key: str) -> InvoiceRequest | None:
+        """Return the stored request for ``key``, or None."""
+        ...
+
+    def record_price_overrides(
+        self,
+        key: str,
+        autocount_invoice_id: str,
+        overrides: tuple[dict[str, Any], ...],
+    ) -> None:
+        """Persist non-authoritative issued-vs-original price metadata."""
+        ...
+
+    def list_price_overrides(self, key: str) -> list[dict[str, Any]]:
+        """Return persisted price override metadata for one request."""
+        ...
+
+    def mark_succeeded(
+        self, key: str, autocount_invoice_id: str, autocount_invoice_number: str
+    ) -> InvoiceRequest:
+        """Record that AutoCount created the invoice."""
+        ...
+
+    def mark_ambiguous(self, key: str, message: str) -> InvoiceRequest:
+        """Record that a write timed out and may or may not have been applied."""
+        ...
+
+    def mark_failed(self, key: str, message: str) -> InvoiceRequest:
+        """Record a definite failure before any AutoCount invoice was created."""
+        ...
 
 
 class RequestRepository:
@@ -114,27 +194,7 @@ class RequestRepository:
             row = conn.execute(
                 "SELECT * FROM invoice_requests WHERE idempotency_key = ?", (key,)
             ).fetchone()
-        return self._to_request(row) if row is not None else None
-
-    def _to_request(self, row: sqlite3.Row) -> InvoiceRequest:
-        try:
-            company = CompanyKey(row["company"])
-            status = RequestStatus(row["status"])
-        except ValueError:
-            raise IdempotencyError(
-                "stored idempotency row has an unknown company or status"
-            ) from None
-        return InvoiceRequest(
-            idempotency_key=row["idempotency_key"],
-            company=company,
-            request_hash=row["request_hash"],
-            status=status,
-            autocount_invoice_id=row["autocount_invoice_id"],
-            autocount_invoice_number=row["autocount_invoice_number"],
-            error_message=row["error_message"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-        )
+        return to_request(row) if row is not None else None
 
     def begin(self, key: str, company: CompanyKey, request_hash: str) -> InvoiceRequest:
         """Insert a pending row, or return the stored row for the same request.
@@ -144,7 +204,7 @@ class RequestRepository:
         ``ambiguous`` rows are returned without success data so the caller
         reconciles them before replaying.
         """
-        now = _now()
+        now = utc_now_iso()
         with self._connect() as conn:
             cursor = conn.execute(
                 "INSERT OR IGNORE INTO invoice_requests "
@@ -188,7 +248,7 @@ class RequestRepository:
                         override["item_id"],
                         str(override["original_unit_price"]),
                         str(override["issued_unit_price"]),
-                        _now(),
+                        utc_now_iso(),
                     ),
                 )
 
@@ -225,7 +285,7 @@ class RequestRepository:
                 "UPDATE invoice_requests SET status = ?, autocount_invoice_id = ?, "
                 "autocount_invoice_number = ?, error_message = ?, updated_at = ? "
                 "WHERE idempotency_key = ?",
-                (status.value, invoice_id, invoice_number, error_message, _now(), key),
+                (status.value, invoice_id, invoice_number, error_message, utc_now_iso(), key),
             )
             if cursor.rowcount == 0:
                 raise IdempotencyError(f"no idempotency row for key {key!r}")

@@ -39,7 +39,7 @@ from app.models.master_data import (
 )
 from app.repositories.request_repository import (
     InvoiceRequest,
-    RequestRepository,
+    RequestRepositoryPort,
     RequestStatus,
 )
 from app.services.product_resolution import (
@@ -158,7 +158,7 @@ class InvoiceService:
         company_resolver: Callable[[CompanyKey], CompanyConfig | None],
         master_data: MasterDataPort,
         client: AutoCountWritePort,
-        requests: RequestRepository,
+        requests: RequestRepositoryPort,
     ) -> None:
         self.company_resolver = company_resolver
         self.master_data = master_data

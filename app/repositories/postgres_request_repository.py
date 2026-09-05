@@ -1,9 +1,9 @@
 """Postgres-backed idempotency repository for invoice issue requests.
 
-Same contract and rules as ``app.repositories.request_repository.RequestRepository``
-(SQLite), reimplemented against Postgres so it survives a serverless platform's
-ephemeral filesystem (e.g. Vercel), where a local SQLite file does not persist
-between invocations.
+Same contract as ``app.repositories.request_repository`` (which owns the
+shared status enum, exceptions, request record, and row mapping), reimplemented
+against Postgres so it survives a serverless platform's ephemeral filesystem
+(e.g. Vercel), where a local SQLite file does not persist between invocations.
 
 - Same idempotency key plus the same request body returns the stored result.
 - Same idempotency key with a different request body is rejected with
@@ -27,16 +27,22 @@ dependency surface small. Swap for ``psycopg_pool`` if connection volume grows.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from dataclasses import replace
 from decimal import Decimal
-from enum import Enum
 from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
 
 from app.models.company import CompanyKey
+from app.repositories.request_repository import (
+    IdempotencyConflictError,
+    IdempotencyError,
+    InvoiceRequest,
+    RequestStatus,
+    to_request,
+    utc_now_iso,
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS invoice_requests (
@@ -62,40 +68,6 @@ CREATE TABLE IF NOT EXISTS invoice_price_overrides (
   UNIQUE (idempotency_key, item_id)
 );
 """
-
-
-class RequestStatus(str, Enum):
-    PENDING = "pending"
-    SUCCEEDED = "succeeded"
-    AMBIGUOUS = "ambiguous"
-    FAILED = "failed"
-
-
-class IdempotencyError(Exception):
-    """Base error for the idempotency repository."""
-
-
-class IdempotencyConflictError(IdempotencyError):
-    """The idempotency key was already used for a different request."""
-
-
-@dataclass(frozen=True)
-class InvoiceRequest:
-    idempotency_key: str
-    company: CompanyKey
-    request_hash: str
-    status: RequestStatus
-    autocount_invoice_id: str | None
-    autocount_invoice_number: str | None
-    error_message: str | None
-    created_at: str
-    updated_at: str
-    # Transient result of begin(); never stored in invoice_requests.
-    is_new: bool = False
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 class PostgresRequestRepository:
@@ -125,27 +97,7 @@ class PostgresRequestRepository:
             row = conn.execute(
                 "SELECT * FROM invoice_requests WHERE idempotency_key = %s", (key,)
             ).fetchone()
-        return self._to_request(row) if row is not None else None
-
-    def _to_request(self, row: dict[str, Any]) -> InvoiceRequest:
-        try:
-            company = CompanyKey(row["company"])
-            status = RequestStatus(row["status"])
-        except ValueError:
-            raise IdempotencyError(
-                "stored idempotency row has an unknown company or status"
-            ) from None
-        return InvoiceRequest(
-            idempotency_key=row["idempotency_key"],
-            company=company,
-            request_hash=row["request_hash"],
-            status=status,
-            autocount_invoice_id=row["autocount_invoice_id"],
-            autocount_invoice_number=row["autocount_invoice_number"],
-            error_message=row["error_message"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-        )
+        return to_request(row) if row is not None else None
 
     def begin(self, key: str, company: CompanyKey, request_hash: str) -> InvoiceRequest:
         """Insert a pending row, or return the stored row for the same request.
@@ -155,7 +107,7 @@ class PostgresRequestRepository:
         ``ambiguous`` rows are returned without success data so the caller
         reconciles them before replaying.
         """
-        now = _now()
+        now = utc_now_iso()
         with self._connect() as conn:
             cursor = conn.execute(
                 "INSERT INTO invoice_requests "
@@ -202,7 +154,7 @@ class PostgresRequestRepository:
                         override["item_id"],
                         str(override["original_unit_price"]),
                         str(override["issued_unit_price"]),
-                        _now(),
+                        utc_now_iso(),
                     ),
                 )
             conn.commit()
@@ -240,7 +192,7 @@ class PostgresRequestRepository:
                 "UPDATE invoice_requests SET status = %s, autocount_invoice_id = %s, "
                 "autocount_invoice_number = %s, error_message = %s, updated_at = %s "
                 "WHERE idempotency_key = %s",
-                (status.value, invoice_id, invoice_number, error_message, _now(), key),
+                (status.value, invoice_id, invoice_number, error_message, utc_now_iso(), key),
             )
             if cursor.rowcount == 0:
                 conn.rollback()

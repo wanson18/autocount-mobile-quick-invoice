@@ -18,7 +18,10 @@ from pathlib import Path
 from app.autocount import AutoCountClient
 from app.autocount.adapter import AutoCountMasterDataAdapter
 from app.config import get_company
-from app.repositories.request_repository import RequestRepository
+from app.repositories.request_repository import (
+    RequestRepository,
+    RequestRepositoryPort,
+)
 from app.services.invoice_edit_service import InvoiceEditService
 from app.services.invoice_service import InvoiceService
 
@@ -38,7 +41,7 @@ ENV_DATABASE_URL = "DATABASE_URL"
 
 _client_instance: AutoCountClient | None = None
 _master_data_instance: AutoCountMasterDataAdapter | None = None
-_repository_instance: object | None = None
+_repository_instance: RequestRepositoryPort | None = None
 _service_instance: InvoiceService | None = None
 _edit_service_instance: InvoiceEditService | None = None
 
@@ -60,7 +63,7 @@ def get_master_data() -> AutoCountMasterDataAdapter:
     return _master_data_instance
 
 
-def _get_repository() -> object:
+def _get_repository() -> RequestRepositoryPort:
     """Build the idempotency repository: Postgres when a DSN is configured,
     SQLite otherwise (local dev, or any host with a persistent filesystem).
     """
