@@ -507,14 +507,7 @@ def test_api_responses_are_not_given_cache_headers(api):
     assert "cache-control" not in client.get("/api/companies").headers
 
 
-def test_cloud_report_redirect_uses_selected_company_book_and_invoice_key(api, monkeypatch):
-    # This is the stale single-template value that caused Enterprise invoices
-    # to open in the Sdn Bhd book in production.
-    monkeypatch.setenv(
-        "AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE",
-        "https://accounting-report.autocountcloud.com/rpt/63688/invoice?"
-        "reportName=WANSON+SDN+BHD+E-INVOICE+&docKey={doc_key}",
-    )
+def test_cloud_report_redirect_uses_selected_company_book_and_invoice_key(api):
     client, _, _ = api
     response = client.get(
         "/api/enterprise/invoices/INV-2026-0001/cloud-report",
@@ -529,12 +522,17 @@ def test_cloud_report_redirect_uses_selected_company_book_and_invoice_key(api, m
     assert SDN_BHD_AB not in response.headers["location"]
 
 
-def test_cloud_report_redirect_works_without_the_old_global_template(api, monkeypatch):
-    monkeypatch.delenv("AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE", raising=False)
+def test_cloud_report_redirect_uses_the_sdn_bhd_book_and_report_identity(api):
+    # The Sdn Bhd report name keeps its trailing space: that is the configured
+    # AutoCount report identity, and the redirect must carry it exactly.
     client, _, _ = api
     response = client.get(
         "/api/sdn_bhd/invoices/INV-2026-0001/cloud-report",
         follow_redirects=False,
     )
     assert response.status_code == 307
-    assert "/rpt/ab-wanson-sdn-bhd-001/invoice" in response.headers["location"]
+    assert response.headers["location"] == (
+        "https://accounting-report.autocountcloud.com/rpt/"
+        "ab-wanson-sdn-bhd-001/invoice?reportName=WANSON+SDN+BHD+E-INVOICE+"
+        "&docKey=inv-1"
+    )

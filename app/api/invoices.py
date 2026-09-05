@@ -18,7 +18,11 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import RedirectResponse, Response
 
-from app.config import get_company
+from app.config import (
+    CLOUD_INVOICE_REPORT_NAMES,
+    CLOUD_REPORT_BASE_URL,
+    get_company,
+)
 from app.dependencies import (
     get_invoice_edit_service,
     get_invoice_service,
@@ -53,14 +57,6 @@ from app.services.invoice_edit_service import (
 from app.services.price_history import get_price_history
 
 router = APIRouter(tags=["invoices"])
-
-_CLOUD_REPORT_BASE_URL = "https://accounting-report.autocountcloud.com"
-_INVOICE_REPORT_NAMES = {
-    CompanyKey.ENTERPRISE: "Wanson Enterprise Invoice",
-    # Keep the existing Sdn Bhd report name, including its trailing space,
-    # because that is the configured AutoCount report identity.
-    CompanyKey.SDN_BHD: "WANSON SDN BHD E-INVOICE ",
-}
 
 #: How far back the recent-invoice list looks by default. Deliberately much
 #: shorter than ``EDIT_WINDOW_DAYS``: browsing is for "what did I just issue",
@@ -280,10 +276,10 @@ async def get_cloud_report(
     selected_company = get_company(company)
     invoice = await read_invoice(master, selected_company, doc_no)
     location = (
-        f"{_CLOUD_REPORT_BASE_URL}/rpt/{selected_company.account_book_id}/invoice?"
+        f"{CLOUD_REPORT_BASE_URL}/rpt/{selected_company.account_book_id}/invoice?"
         + urlencode(
             {
-                "reportName": _INVOICE_REPORT_NAMES[company],
+                "reportName": CLOUD_INVOICE_REPORT_NAMES[company],
                 "docKey": invoice.id,
             }
         )

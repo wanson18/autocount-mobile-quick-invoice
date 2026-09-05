@@ -37,13 +37,6 @@ class FakeMasterData:
 def report_client(monkeypatch):
     monkeypatch.setenv("AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE", "ab-ent")
     monkeypatch.setenv("AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD", "ab-sdn")
-    # This was the old single-template configuration. It must not be reused
-    # for an Enterprise request.
-    monkeypatch.setenv(
-        "AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE",
-        "https://accounting-report.autocountcloud.com/rpt/63688/invoice?"
-        "reportName=WANSON+SDN+BHD+E-INVOICE+&docKey={doc_key}",
-    )
     master = FakeMasterData()
     app.dependency_overrides[get_master_data] = lambda: master
     yield TestClient(app), master

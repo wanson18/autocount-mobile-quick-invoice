@@ -15,7 +15,6 @@ from app.config import (
     CompanyConfig,
     CompanyConfigError,
     CompanyListing,
-    get_cloud_invoice_url_template,
     get_company,
     list_companies,
 )
@@ -187,13 +186,13 @@ def test_per_company_credential_whitespace_is_stripped():
     assert (enterprise.key_id, enterprise.api_key) == ("ent-key-id", "ent-api-key")
 
 
-def test_cloud_report_template_is_optional_until_used():
-    assert get_cloud_invoice_url_template(ENV) is None
+def test_cloud_report_template_config_helpers_are_gone():
+    import app.config as config
 
-
-def test_blank_cloud_report_template_is_treated_as_missing():
-    env = {**ENV, "AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE": " "}
-    assert get_cloud_invoice_url_template(env) is None
+    # The env-template Cloud report path was replaced by the company-scoped
+    # CLOUD_INVOICE_REPORT_NAMES constants; nothing may read a template again.
+    assert not hasattr(config, "get_cloud_invoice_url_template")
+    assert not hasattr(config, "ENV_CLOUD_INVOICE_URL_TEMPLATE")
 
 
 def test_print_agent_config_helpers_are_gone():

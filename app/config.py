@@ -33,11 +33,18 @@ ENV_API_KEY_ENTERPRISE = "AUTOCOUNT_API_KEY_WANSON_ENTERPRISE"
 ENV_KEY_ID_SDN_BHD = "AUTOCOUNT_KEY_ID_WANSON_SDN_BHD"
 ENV_API_KEY_SDN_BHD = "AUTOCOUNT_API_KEY_WANSON_SDN_BHD"
 
-# Verified Cloud report URL template, supplied by the user and stored server-side.
-# It carries the account-book path (a secret) baked into the value and exposes a
-# single {doc_key} placeholder filled with the server-confirmed AutoCount docKey.
-# Never sent to the client and never embedded in browser assets or the OpenAPI schema.
-ENV_CLOUD_INVOICE_URL_TEMPLATE = "AUTOCOUNT_CLOUD_INVOICE_URL_TEMPLATE"
+# Verified AutoCount Cloud report identities for the invoice report, scoped to
+# the selected company: the server resolves the CompanyKey to its own account
+# book (above) and its own report name (below), substituting the
+# server-confirmed docKey before redirecting. These are server-side only — the
+# client never supplies or sees the base URL, account book, or report name.
+# The Sdn Bhd report name keeps its trailing space because that is the
+# configured AutoCount report identity.
+CLOUD_REPORT_BASE_URL = "https://accounting-report.autocountcloud.com"
+CLOUD_INVOICE_REPORT_NAMES = {
+    CompanyKey.ENTERPRISE: "Wanson Enterprise Invoice",
+    CompanyKey.SDN_BHD: "WANSON SDN BHD E-INVOICE ",
+}
 
 _DISPLAY_NAMES = {
     CompanyKey.ENTERPRISE: "Wanson Enterprise",
@@ -151,17 +158,3 @@ def list_companies(env: Mapping[str, str] | None = None) -> list[CompanyListing]
         env = os.environ
     configs = _load(env)
     return [CompanyListing(key=config.key, name=config.name) for config in (configs[key] for key in CompanyKey)]
-
-
-def get_cloud_invoice_url_template(env: Mapping[str, str] | None = None) -> str | None:
-    """Return the verified Cloud report URL template, or ``None`` if unset.
-
-    The template is server-side configuration: it embeds the account-book path
-    (a secret) and exposes a single ``{doc_key}`` placeholder. The client never
-    receives it; the cloud-report route fills ``{doc_key}`` with the
-    server-confirmed AutoCount ``docKey`` before redirecting.
-    """
-    if env is None:
-        env = os.environ
-    template = env.get(ENV_CLOUD_INVOICE_URL_TEMPLATE, "").strip()
-    return template or None
