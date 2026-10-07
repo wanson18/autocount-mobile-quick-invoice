@@ -1,0 +1,94 @@
+# Read-only look at where AutoCount keeps a product's units of measure.
+#
+# Prints the shape of one product, its listing row and its recent invoice
+# lines (structure plus unit-related values only). See
+# scripts/diagnose_product_uom.py.
+#
+# WRITES NOTHING -- only reads. Same secrets as the invoice listing diagnostic:
+#   AUTOCOUNT_API_KEY_ID, AUTOCOUNT_API_KEY,
+#   AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD / _ENTERPRISE (for the chosen book)
+name: Product UOM diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "Account book to read"
+        required: true
+        type: choice
+        options:
+          - sdn_bhd
+          - enterprise
+        default: sdn_bhd
+      code:
+        description: "Product code of an item that has several UOMs in AutoCount"
+        required: true
+        type: string
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install the app package
+        run: pip install -e .
+
+      - name: Diagnose the product
+        env:
+          AUTOCOUNT_API_KEY_ID: ${{ secrets.AUTOCOUNT_API_KEY_ID }}
+          AUTOCOUNT_API_KEY: ${{ secrets.AUTOCOUNT_API_KEY }}
+          SECRET_AB_ENTERPRISE: ${{ secrets.AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE }}
+          SECRET_AB_SDN_BHD: ${{ secrets.AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD }}
+          # Inputs travel through the environment, never interpolated into the
+          # script text.
+          IN_COMPANY: ${{ inputs.company }}
+          IN_CODE: ${{ inputs.code }}
+        run: |
+          set -o pipefail
+
+          case "$IN_COMPANY" in
+            sdn_bhd)
+              if [ -z "$SECRET_AB_SDN_BHD" ]; then
+                echo "::error::Repository secret AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD is not set."
+                exit 1
+              fi
+              export AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD="$SECRET_AB_SDN_BHD"
+              export AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE="${SECRET_AB_ENTERPRISE:-placeholder-enterprise-not-configured}"
+              ;;
+            enterprise)
+              if [ -z "$SECRET_AB_ENTERPRISE" ]; then
+                echo "::error::Repository secret AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE is not set."
+                exit 1
+              fi
+              export AUTOCOUNT_ACCOUNT_BOOK_WANSON_ENTERPRISE="$SECRET_AB_ENTERPRISE"
+              export AUTOCOUNT_ACCOUNT_BOOK_WANSON_SDN_BHD="${SECRET_AB_SDN_BHD:-placeholder-sdn-bhd-not-configured}"
+              ;;
+            *)
+              echo "::error::Unknown company: $IN_COMPANY"
+              exit 1
+              ;;
+          esac
+
+          python scripts/diagnose_product_uom.py \
+            --company "$IN_COMPANY" --code "$IN_CODE" 2>&1 | tee diagnosis.txt
+
+      - name: Publish the diagnosis
+        if: always()
+        env:
+          IN_COMPANY: ${{ inputs.company }}
+        run: |
+          {
+            echo "## Product UOM diagnosis"
+            echo
+            echo "Account book: \`$IN_COMPANY\`"
+            echo
+            echo '```'
+            cat diagnosis.txt 2>/dev/null || echo "(no output captured)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

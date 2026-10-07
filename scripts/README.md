@@ -6,6 +6,7 @@ by Vercel. Credentials come from the environment (see `.env.example`).
 | Script | Purpose |
 |---|---|
 | [`diagnose_invoice_listing.py`](diagnose_invoice_listing.py) | Read-only diagnosis of AutoCount invoice listing paging |
+| [`diagnose_product_uom.py`](diagnose_product_uom.py) | Read-only look at where AutoCount keeps a product's units of measure |
 | [`spike_invoice_update.py`](spike_invoice_update.py) | Live probe of whether an approved invoice accepts `PUT` |
 
 Office printing is not handled here. Open the official AutoCount Cloud
