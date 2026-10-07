@@ -25,10 +25,19 @@ NonBlankIdentifier = Annotated[
 ]
 
 
+#: AutoCount's invoice detail ``unit`` field holds at most 8 characters.
+UnitName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=8)
+]
+
+
 class InvoiceLineInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     item_id: NonBlankIdentifier
+    #: Unit of measure the quantity and price are in. Absent means the
+    #: product's base unit; the server checks it against the product.
+    unit: UnitName | None = None
     quantity: Decimal = Field(gt=0)
     unit_price: Decimal = Field(ge=0)
     original_unit_price: Decimal = Field(ge=0)
@@ -77,6 +86,8 @@ class InvoiceEditLine(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     item_id: NonBlankIdentifier
+    #: Echoed back for every line so a rewrite keeps each row's unit.
+    unit: UnitName | None = None
     quantity: Decimal = Field(gt=0)
     unit_price: Decimal = Field(ge=0)
 

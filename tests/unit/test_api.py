@@ -222,6 +222,8 @@ def test_search_products_returns_stringified_prices(api):
                 "code": "ITEM-1",
                 "name": "Cooking Oil",
                 "default_price": "30.00",
+                "unit": "",
+                "uoms": [],
             }
         ]
     }

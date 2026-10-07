@@ -54,7 +54,12 @@ from app.models.master_data import (
     InvoiceSummary,
     PriceHistory,
     ProductSummary,
+    ProductUom,
 )
+
+#: AutoCount stores an invoice line's ``unit`` in at most 8 characters, so a
+#: longer multipack name could never be sent back on a line.
+_MAX_UNIT_LENGTH = 8
 
 DEFAULT_ADDRESS_LABEL = "Default delivery address"
 _LISTING_PAGE_LIMIT = 1000
@@ -424,7 +429,7 @@ class AutoCountMasterDataAdapter:
             raise AutoCountDataError(
                 "AutoCount returned a different product for the requested item"
             )
-        return self._product_summary(product)
+        return self._product_summary(product, payload.get("productMultiPacks"))
 
     async def _cached_listing(
         self,
@@ -637,14 +642,20 @@ class AutoCountMasterDataAdapter:
             raise AutoCountDataError(
                 "AutoCount product listing row is missing its product data"
             )
-        return cls._product_summary(product)
+        return cls._product_summary(product, row.get("productMultiPacks"))
 
     @classmethod
-    def _product_summary(cls, product: dict[str, Any]) -> ProductSummary:
+    def _product_summary(
+        cls, product: dict[str, Any], multipacks: Any = None
+    ) -> ProductSummary:
         code = cls._product_code(product)
         name = cls._product_name(product)
         price = cls._product_price(product)
+        unit = product.get("unit")
+        unit = unit.strip() if isinstance(unit, str) else ""
         return ProductSummary(
+            unit=unit,
+            uoms=cls._product_uoms(multipacks, unit),
             id=code,
             code=code,
             name=name,
@@ -656,6 +667,41 @@ class AutoCountMasterDataAdapter:
                 "classification code",
             ),
         )
+
+    @staticmethod
+    def _product_uoms(multipacks: Any, base_unit: str) -> tuple[ProductUom, ...]:
+        """The product's alternate units, from its multipack rows.
+
+        Units are optional extras, so an unusable row is skipped rather than
+        failing the whole product search. Variant-specific rows are skipped
+        too: the app sells a product, not a variant of it. The base unit is
+        left out because it is already the product's own price.
+        """
+        if not isinstance(multipacks, list):
+            return ()
+        uoms: list[ProductUom] = []
+        seen = {base_unit}
+        for row in multipacks:
+            if not isinstance(row, dict):
+                continue
+            if row.get("productVariant1OptionName") or row.get("productVariant2OptionName"):
+                continue
+            name = row.get("multiPack")
+            if not isinstance(name, str):
+                continue
+            name = name.strip()
+            if not name or len(name) > _MAX_UNIT_LENGTH or name in seen:
+                continue
+            try:
+                rate = Decimal(str(row.get("multiPackRate")))
+                price = Decimal(str(row.get("price")))
+            except (decimal.InvalidOperation, ValueError):
+                continue
+            if not (rate.is_finite() and price.is_finite()) or rate <= 0 or price < 0:
+                continue
+            seen.add(name)
+            uoms.append(ProductUom(name=name, rate=rate, price=price))
+        return tuple(uoms)
 
     @staticmethod
     def _product_code(product: dict[str, Any]) -> str:
@@ -749,7 +795,14 @@ class AutoCountMasterDataAdapter:
                 detail.get("unitPrice"), "invoice unit price", must_be_positive=False
             ),
             description=cls._invoice_description(detail),
+            unit=cls._invoice_unit(detail),
         )
+
+    @staticmethod
+    def _invoice_unit(detail: dict[str, Any]) -> str:
+        """The line's stored unit, blank when absent or not text."""
+        raw = detail.get("unit")
+        return raw.strip() if isinstance(raw, str) else ""
 
     @staticmethod
     def _invoice_description(detail: dict[str, Any]) -> str:

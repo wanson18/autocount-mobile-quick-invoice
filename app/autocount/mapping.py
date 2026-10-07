@@ -39,6 +39,27 @@ DEFAULT_PAYMENT_METHOD = "CASH"
 DEFAULT_ACC_NO = "500-0000"
 
 
+def _checked_unit(
+    product: ProductSummary, unit: str | None, extra_allowed: Sequence[str] = ()
+) -> str | None:
+    """The ``unit`` to send for a line, or ``None`` to leave AutoCount's default.
+
+    A unit that is not one of the product's own is refused so a stray value
+    can never reach the accounting books. The base unit is not sent: leaving
+    it out keeps the request identical to one made before units existed.
+    ``extra_allowed`` carries units already stored on the invoice being
+    edited, so rewriting an old line never fails on a unit the product has
+    since lost.
+    """
+    if not unit:
+        return None
+    if unit not in product.unit_names() and unit not in extra_allowed:
+        raise ValueError(f"unit {unit!r} is not available for item {product.code}")
+    if unit == product.unit and unit not in extra_allowed:
+        return None
+    return unit
+
+
 def map_invoice_payload(
     draft: InvoiceDraftInput,
     customer: CustomerSummary,
@@ -72,10 +93,12 @@ def map_invoice_payload(
         product = products.get(line.item_id)
         if product is None or product.id != line.item_id or product.code != line.item_id:
             raise ValueError(f"resolved product does not match item {line.item_id}")
+        unit = _checked_unit(product, line.unit)
         details.append(
             {
                 "productCode": product.code,
                 "description": product.name,
+                **({"unit": unit} if unit else {}),
                 # Decimal, not str(): the transport layer (app.autocount.client)
                 # encodes Decimal as an exact, unquoted JSON number. AutoCount's
                 # API rejects a quoted decimal string for these numeric fields
@@ -184,15 +207,20 @@ def map_invoice_update_payload(
             )
         master[field] = value
 
+    stored_units = {line.unit for line in invoice.lines if line.unit}
     details: list[dict[str, Any]] = []
     for line in lines:
         product = products.get(line.item_id)
         if product is None or product.id != line.item_id or product.code != line.item_id:
             raise ValueError(f"resolved product does not match item {line.item_id}")
+        # Every row is rewritten in full, so a row's unit must be echoed or
+        # AutoCount would reset it.
+        unit = _checked_unit(product, line.unit, tuple(stored_units))
         details.append(
             {
                 "productCode": product.code,
                 "description": product.name,
+                **({"unit": unit} if unit else {}),
                 # Decimal, not str(): app.autocount.client encodes Decimal as
                 # an exact bare JSON number. A quoted decimal fails with a
                 # System.Decimal conversion error and float() would risk

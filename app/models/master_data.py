@@ -50,14 +50,40 @@ class DeliveryAddress:
 
 
 @dataclass(frozen=True)
+class ProductUom:
+    """One alternate unit of measure a product can be sold in.
+
+    Read from the product's multipack rows. ``rate`` is how many base units
+    one of this unit holds; ``price`` is the master price per this unit.
+    """
+
+    name: str
+    rate: Decimal
+    price: Decimal
+
+
+@dataclass(frozen=True)
 class ProductSummary:
-    """An item from the selected account book, with its exact master price."""
+    """An item from the selected account book, with its exact master price.
+
+    ``unit`` is the product's base unit and ``default_price`` is the price per
+    that unit. ``uoms`` lists the alternate units, excluding the base unit.
+    """
 
     id: str
     code: str
     name: str
     default_price: Decimal
     classification_code: str | None = None
+    unit: str = ""
+    uoms: tuple[ProductUom, ...] = ()
+
+    def unit_names(self) -> set[str]:
+        """Every unit this product may be sold in, base unit included."""
+        names = {uom.name for uom in self.uoms}
+        if self.unit:
+            names.add(self.unit)
+        return names
 
 
 @dataclass(frozen=True)
@@ -92,6 +118,7 @@ class InvoiceLineSummary:
     qty: Decimal
     unit_price: Decimal
     description: str = ""
+    unit: str = ""
 
 
 @dataclass(frozen=True)
@@ -140,11 +167,22 @@ class DeliveryAddressItem(BaseModel):
 DeliveryAddressListResponse = ListResponse[DeliveryAddressItem]
 
 
+class ProductUomItem(BaseModel):
+    name: str
+    rate: str
+    price: str
+
+
 class ProductSearchItem(BaseModel):
     id: str
     code: str
     name: str
     default_price: str
+    #: The base unit that ``default_price`` is quoted in; blank if AutoCount
+    #: holds none. ``uoms`` are the alternates, so the client shows a selector
+    #: only when the list is non-empty.
+    unit: str = ""
+    uoms: list[ProductUomItem] = []
 
 
 ProductSearchResponse = ListResponse[ProductSearchItem]
@@ -157,6 +195,7 @@ class InvoiceLineItem(BaseModel):
     description: str
     quantity: str
     unit_price: str
+    unit: str = ""
 
 
 class InvoiceListItem(BaseModel):

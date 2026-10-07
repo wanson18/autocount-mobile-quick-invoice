@@ -231,6 +231,7 @@ def _detail_item(invoice: InvoiceSummary) -> InvoiceDetailItem:
                 description=line.description,
                 quantity=str(line.qty),
                 unit_price=str(line.unit_price),
+                unit=line.unit,
             )
             for line in invoice.lines
         ],
