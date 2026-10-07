@@ -43,7 +43,7 @@
     customer: null,         // { id, code, name }
     address: null,          // { id, label, address_text }
     invoiceDate: todayISO(),
-    lines: [],              // [{ item_id, code, name, quantity, unit_price, original_unit_price }]
+    lines: [],              // [{ item_id, code, name, quantity, unit_price, original_unit_price, unit, base_unit, base_price, uoms }]
     idempotencyKey: null,
     issuing: false,
     issueResult: null,      // { invoice_number, ... } | { error }
@@ -237,6 +237,7 @@
       const prior = state.editOriginal[i];
       return (
         prior.item_id !== line.item_id ||
+        (prior.unit || "") !== (line.unit || "") ||
         parseFloat(prior.quantity) !== parseFloat(line.quantity) ||
         parseFloat(prior.unit_price) !== parseFloat(line.unit_price)
       );
@@ -470,7 +471,7 @@
           '<div class="line-total">RM ' + money(decMul(line.quantity, line.unit_price)) + "</div>" +
           "</div>" +
           '<div class="line-sub">' + escapeHtml(line.description) + "</div>" +
-          '<div class="line-sub">' + escapeHtml(line.quantity) + " &times; RM " +
+          '<div class="line-sub">' + escapeHtml(line.quantity) + qtyUnit(line.unit) + " &times; RM " +
           money(line.unit_price) + "</div></div>"
         );
       })
@@ -520,12 +521,14 @@
     // server can refuse a save built on a view that has since gone stale.
     state.editOriginal = inv.lines.map((line) => ({
       item_id: line.product_code,
+      unit: line.unit || "",
       quantity: line.quantity,
       unit_price: line.unit_price,
     }));
     state.editLines = inv.lines.map((line) => ({
       item_id: line.product_code,
       description: line.description,
+      unit: line.unit || "",
       quantity: line.quantity,
       unit_price: line.unit_price,
     }));
@@ -533,6 +536,33 @@
     showBanner(null);
     editItemPicker.hide();
     render();
+    loadUomsForEditLines();
+  }
+
+  // Which units a product offers is not stored on an invoice line, so ask
+  // for each distinct product. Best effort: a line whose lookup fails shows
+  // no selector and keeps the unit it already has.
+  function loadUomsForEditLines() {
+    new Set(state.editLines.map((l) => l.item_id)).forEach((code) => {
+      loadUnitsFor(state.editLines, code);
+    });
+  }
+
+  // The search list carries only a product's base unit; its own units come
+  // from the single-product read. Fills every line of that product, then
+  // redraws -- unless the screen has moved on to other lines meanwhile.
+  async function loadUnitsFor(lines, code) {
+    try {
+      const product = await apiGet(
+        "/" + state.company.key + "/products/" + encodeURIComponent(code)
+      );
+      lines.forEach((line) => {
+        if (line.item_id === code) applyProductUnits(line, product);
+      });
+      if (lines === state.lines || lines === state.editLines) render();
+    } catch (e) {
+      // Units are optional; leave the line as it is.
+    }
   }
 
   const editLineListEl = document.getElementById("edit-line-list");
@@ -550,10 +580,15 @@
       state.editLines.push({
         item_id: p.id,
         description: p.name,
+        unit: p.unit || "",
         quantity: "1",
         unit_price: p.default_price,
+        base_unit: p.unit || "",
+        base_price: p.default_price,
+        uoms: [],
       });
       render();
+      loadUnitsFor(state.editLines, p.id);
     }
   );
 
@@ -575,6 +610,7 @@
           '<button class="remove-btn" data-idx="' + index + '"' +
             (state.editLines.length === 1 ? " disabled" : "") + ">Remove</button>" +
         "</div>" +
+        uomSelectHtml(line, index) +
         '<div class="qty-price-row">' +
           '<div><label>Quantity</label><input type="number" inputmode="decimal" min="0" step="any" class="qty-input" data-idx="' + index + '" value="' + escapeHtml(line.quantity) + '" /></div>' +
           '<div><label>Unit Price (RM)</label><input type="number" inputmode="decimal" min="0" step="any" class="price-input" data-idx="' + index + '" value="' + escapeHtml(line.unit_price) + '" /></div>' +
@@ -592,6 +628,7 @@
     wireLineInputs(editLineListEl, state.editLines, () => {
       nextBtn.disabled = !canSaveEdit("invoiceEdit");
     });
+    wireUomSelects(editLineListEl, state.editLines, render);
   }
 
   // ---------- Branch: confirm the change ----------
@@ -608,14 +645,15 @@
       const prior = before[index];
       if (!prior || prior.item_id !== line.item_id) {
         rows.push(diffRow("added", "+ " + line.item_id + "  " +
-          line.quantity + " × RM " + money(line.unit_price)));
+          line.quantity + qtyUnitText(line.unit) + " × RM " + money(line.unit_price)));
       } else if (
+        (prior.unit || "") !== (line.unit || "") ||
         parseFloat(prior.quantity) !== parseFloat(line.quantity) ||
         parseFloat(prior.unit_price) !== parseFloat(line.unit_price)
       ) {
         rows.push(diffRow("changed", "~ " + line.item_id + "  " +
-          prior.quantity + " × RM " + money(prior.unit_price) + "  →  " +
-          line.quantity + " × RM " + money(line.unit_price)));
+          prior.quantity + qtyUnitText(prior.unit) + " × RM " + money(prior.unit_price) + "  →  " +
+          line.quantity + qtyUnitText(line.unit) + " × RM " + money(line.unit_price)));
       }
     });
     before.slice(after.length).forEach((line) => {
@@ -640,6 +678,7 @@
   function editPayloadLines(lines) {
     return lines.map((line) => ({
       item_id: line.item_id,
+      unit: line.unit || null,
       quantity: String(line.quantity),
       unit_price: String(line.unit_price),
     }));
@@ -803,22 +842,37 @@
       unit_price: product.default_price,
       original_unit_price: product.default_price,
       priceSource: "default",
+      unit: product.unit || "",
+      base_unit: product.unit || "",
+      base_price: product.default_price,
+      uoms: [],
     };
     state.lines.push(line);
     render();
+    loadUnitsFor(state.lines, product.id);
     fetchPriceHistoryFor(line);
   }
 
+  // The customer's last price for this item *in the line's current unit*: a
+  // price per box is not a price per packet. Asked again whenever the unit
+  // changes; a late answer for a unit the line has left, or over a price the
+  // user has since typed, is dropped.
   async function fetchPriceHistoryFor(line) {
     if (!state.customer) return;
+    const asked = line.unit;
     try {
-      const data = await apiPost("/invoices/preview", {
+      const body = {
         company: state.company.key,
         customer_id: state.customer.id,
         item_ids: [line.item_id],
-      });
+      };
+      if (asked) {
+        body.unit = asked;
+        if (line.base_unit) body.base_unit = line.base_unit;
+      }
+      const data = await apiPost("/invoices/preview", body);
       const entry = (data.items || [])[0];
-      if (entry && entry.latest_unit_price) {
+      if (entry && entry.latest_unit_price && line.unit === asked && !line.priceTouched) {
         line.unit_price = entry.latest_unit_price;
         line.original_unit_price = entry.latest_unit_price;
         line.priceSource = "history";
@@ -852,6 +906,7 @@
           '<div class="line-sub">' + escapeHtml(line.code) + '</div></div>' +
           '<button class="remove-btn" data-idx="' + index + '">Remove</button>' +
         '</div>' +
+        uomSelectHtml(line, index) +
         '<div class="qty-price-row">' +
           '<div><label>Quantity</label><input type="number" inputmode="decimal" min="0" step="any" class="qty-input" data-idx="' + index + '" value="' + line.quantity + '" /></div>' +
           '<div><label>Unit Price (RM)</label><input type="number" inputmode="decimal" min="0" step="any" class="price-input" data-idx="' + index + '" value="' + line.unit_price + '" /></div>' +
@@ -866,6 +921,72 @@
     });
     wireLineInputs(lineListEl, state.lines, () => {
       nextBtn.disabled = !canAdvance("items");
+    });
+    wireUomSelects(lineListEl, state.lines, render);
+  }
+
+  // ---------- Units of measure ----------
+
+  function qtyUnitText(unit) {
+    return unit ? " " + unit : "";
+  }
+
+  function qtyUnit(unit) {
+    return unit ? " " + escapeHtml(unit) : "";
+  }
+
+  // Every unit the line can be sold in: the base unit first, then the
+  // alternates, each with the price AutoCount holds for it.
+  function uomOptions(line) {
+    if (!line.uoms || !line.uoms.length) return [];
+    const options = [];
+    if (line.base_unit) options.push({ name: line.base_unit, price: line.base_price });
+    line.uoms.forEach((u) => options.push({ name: u.name, price: u.price }));
+    // A stored unit the product no longer offers stays selectable as-is.
+    if (line.unit && !options.some((o) => o.name === line.unit)) {
+      options.unshift({ name: line.unit, price: line.unit_price });
+    }
+    return options;
+  }
+
+  // Remember what a product offers on a line, keeping the unit it is in.
+  function applyProductUnits(line, product) {
+    line.base_unit = product.unit || "";
+    line.base_price = product.default_price;
+    line.uoms = product.uoms || [];
+  }
+
+  function uomSelectHtml(line, index) {
+    const options = uomOptions(line);
+    if (!options.length) return "";
+    return (
+      '<div class="uom-row"><label>Unit</label>' +
+      '<select class="uom-select" data-idx="' + index + '">' +
+      options.map((o) =>
+        '<option value="' + escapeHtml(o.name) + '"' +
+        (o.name === line.unit ? " selected" : "") + ">" + escapeHtml(o.name) + "</option>"
+      ).join("") +
+      "</select></div>"
+    );
+  }
+
+  // Picking a unit switches the price to the one AutoCount holds for it. The
+  // price stays editable afterwards, like any other.
+  function wireUomSelects(listEl, lines, rerender) {
+    listEl.querySelectorAll(".uom-select").forEach((select) => {
+      select.onchange = () => {
+        const line = lines[parseInt(select.dataset.idx, 10)];
+        const option = uomOptions(line).find((o) => o.name === select.value);
+        if (!option) return;
+        line.unit = option.name;
+        line.unit_price = option.price;
+        if ("original_unit_price" in line) line.original_unit_price = option.price;
+        line.priceSourceLabel = null;
+        line.priceTouched = false;
+        rerender();
+        // New invoice lines only: the edit screen shows no price history.
+        if (lines === state.lines) fetchPriceHistoryFor(line);
+      };
     });
   }
 
@@ -888,6 +1009,7 @@
         // A typed price is a manual override, so any inherited price hint no
         // longer describes it. The edit screen shows no hint; harmless there.
         line.priceSourceLabel = null;
+        line.priceTouched = true;
         onChange();
         updateLineTotal(input);
       };
@@ -920,7 +1042,7 @@
       const row = document.createElement("div");
       row.className = "review-row";
       row.innerHTML =
-        '<span class="label">' + escapeHtml(line.name) + " × " + line.quantity + "</span>" +
+        '<span class="label">' + escapeHtml(line.name) + " × " + line.quantity + qtyUnit(line.unit) + "</span>" +
         "<span>RM " + money(lineTotal) + "</span>";
       reviewLines.appendChild(row);
     });
@@ -1027,6 +1149,7 @@
       delivery_address_id: state.address.id,
       lines: state.lines.map((l) => ({
         item_id: l.item_id,
+        unit: l.unit || null,
         quantity: String(l.quantity),
         unit_price: String(l.unit_price),
         original_unit_price: String(l.original_unit_price),

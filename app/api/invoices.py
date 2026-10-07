@@ -114,7 +114,12 @@ async def preview_invoice_prices(
 ) -> PreviewResponse:
     company = get_company(preview.company)
     history = await get_price_history(
-        master, company, preview.customer_id, preview.item_ids
+        master,
+        company,
+        preview.customer_id,
+        preview.item_ids,
+        unit=preview.unit,
+        base_unit=preview.base_unit or "",
     )
     return PreviewResponse(
         data=PreviewData(
@@ -231,6 +236,7 @@ def _detail_item(invoice: InvoiceSummary) -> InvoiceDetailItem:
                 description=line.description,
                 quantity=str(line.qty),
                 unit_price=str(line.unit_price),
+                unit=line.unit,
             )
             for line in invoice.lines
         ],

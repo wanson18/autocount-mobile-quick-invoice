@@ -54,7 +54,12 @@ from app.models.master_data import (
     InvoiceSummary,
     PriceHistory,
     ProductSummary,
+    ProductUom,
 )
+
+#: AutoCount stores an invoice line's ``unit`` in at most 8 characters, so a
+#: longer multipack name could never be sent back on a line.
+_MAX_UNIT_LENGTH = 8
 
 DEFAULT_ADDRESS_LABEL = "Default delivery address"
 _LISTING_PAGE_LIMIT = 1000
@@ -363,6 +368,8 @@ class AutoCountMasterDataAdapter:
         customer_id: str,
         item_id: str,
         *,
+        unit: str | None = None,
+        base_unit: str = "",
         now: datetime | None = None,
     ) -> PriceHistory | None:
         """The latest unit price issued to this customer for this item.
@@ -372,6 +379,11 @@ class AutoCountMasterDataAdapter:
         most recent non-cancelled invoice whose details contain the item,
         together with that source invoice's number and date. Returns ``None``
         when no prior invoice for the pair exists in the window.
+
+        ``unit`` narrows the match to lines issued in that unit, because a
+        price per box is not a price per packet. A line with no stored unit
+        counts as the product's ``base_unit``. Without ``unit`` any line
+        matches, as before.
 
         ``now`` pins the window end for deterministic tests; the default is
         the current UTC time.
@@ -392,15 +404,25 @@ class AutoCountMasterDataAdapter:
             reverse=True,
         ):
             for line in invoice.lines:
-                if line.product_code == item_id:
+                if line.product_code == item_id and self._line_in_unit(
+                    line.unit, unit, base_unit
+                ):
                     return PriceHistory(
                         item_id=item_id,
                         customer_id=customer_id,
                         unit_price=line.unit_price,
                         source_invoice_number=invoice.doc_no,
                         source_invoice_date=invoice.doc_date,
+                        unit=line.unit,
                     )
         return None
+
+    @staticmethod
+    def _line_in_unit(line_unit: str, wanted: str | None, base_unit: str) -> bool:
+        """Whether a stored line was issued in ``wanted`` (any, when ``None``)."""
+        if wanted is None:
+            return True
+        return (line_unit or base_unit) == wanted
 
     async def get_item(
         self, company: CompanyConfig, item_id: str
@@ -424,7 +446,7 @@ class AutoCountMasterDataAdapter:
             raise AutoCountDataError(
                 "AutoCount returned a different product for the requested item"
             )
-        return self._product_summary(product)
+        return self._product_summary(product, payload.get("productMultiPacks"))
 
     async def _cached_listing(
         self,
@@ -637,14 +659,23 @@ class AutoCountMasterDataAdapter:
             raise AutoCountDataError(
                 "AutoCount product listing row is missing its product data"
             )
+        # A listing row's ``productMultiPacks`` is not that product's own list
+        # (measured live: 31 mixed rows for an item whose GET /product has 2),
+        # so units are never read from it; ``get_item`` is their only source.
         return cls._product_summary(product)
 
     @classmethod
-    def _product_summary(cls, product: dict[str, Any]) -> ProductSummary:
+    def _product_summary(
+        cls, product: dict[str, Any], multipacks: Any = None
+    ) -> ProductSummary:
         code = cls._product_code(product)
         name = cls._product_name(product)
         price = cls._product_price(product)
+        unit = product.get("unit")
+        unit = unit.strip() if isinstance(unit, str) else ""
         return ProductSummary(
+            unit=unit,
+            uoms=cls._product_uoms(multipacks, unit),
             id=code,
             code=code,
             name=name,
@@ -656,6 +687,41 @@ class AutoCountMasterDataAdapter:
                 "classification code",
             ),
         )
+
+    @staticmethod
+    def _product_uoms(multipacks: Any, base_unit: str) -> tuple[ProductUom, ...]:
+        """The product's alternate units, from its multipack rows.
+
+        Units are optional extras, so an unusable row is skipped rather than
+        failing the whole product search. Variant-specific rows are skipped
+        too: the app sells a product, not a variant of it. The base unit is
+        left out because it is already the product's own price.
+        """
+        if not isinstance(multipacks, list):
+            return ()
+        uoms: list[ProductUom] = []
+        seen = {base_unit}
+        for row in multipacks:
+            if not isinstance(row, dict):
+                continue
+            if row.get("productVariant1OptionName") or row.get("productVariant2OptionName"):
+                continue
+            name = row.get("multiPack")
+            if not isinstance(name, str):
+                continue
+            name = name.strip()
+            if not name or len(name) > _MAX_UNIT_LENGTH or name in seen:
+                continue
+            try:
+                rate = Decimal(str(row.get("multiPackRate")))
+                price = Decimal(str(row.get("price")))
+            except (decimal.InvalidOperation, ValueError):
+                continue
+            if not (rate.is_finite() and price.is_finite()) or rate <= 0 or price < 0:
+                continue
+            seen.add(name)
+            uoms.append(ProductUom(name=name, rate=rate, price=price))
+        return tuple(uoms)
 
     @staticmethod
     def _product_code(product: dict[str, Any]) -> str:
@@ -749,7 +815,14 @@ class AutoCountMasterDataAdapter:
                 detail.get("unitPrice"), "invoice unit price", must_be_positive=False
             ),
             description=cls._invoice_description(detail),
+            unit=cls._invoice_unit(detail),
         )
+
+    @staticmethod
+    def _invoice_unit(detail: dict[str, Any]) -> str:
+        """The line's stored unit, blank when absent or not text."""
+        raw = detail.get("unit")
+        return raw.strip() if isinstance(raw, str) else ""
 
     @staticmethod
     def _invoice_description(detail: dict[str, Any]) -> str:

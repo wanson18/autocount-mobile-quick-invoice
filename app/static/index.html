@@ -155,6 +155,9 @@
     background: transparent; border: none; color: var(--danger);
     font-size: 13px; font-weight: 600; padding: 4px 8px; cursor: pointer;
   }
+  .uom-row { margin-top: 12px; }
+  .uom-row label { font-size: 12px; font-weight: 600; color: var(--muted); display: block; margin-bottom: 6px; }
+  .uom-row select { padding: 12px 14px; }
   .qty-price-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
   .qty-price-row label { font-size: 12px; font-weight: 600; color: var(--muted); display: block; margin-bottom: 6px; }
   .line-total { text-align: right; margin-top: 10px; font-size: 15px; color: var(--text); font-weight: 700; }
@@ -362,6 +365,6 @@
      different URL cannot be answered from that entry, so they fetch it once
      and pick up the no-cache header that keeps them current from then on.
      Bump the date only if that situation ever recurs. -->
-<script src="/app.js?v=2026-08-29-no-office-print"></script>
+<script src="/app.js?v=2026-10-07-uom"></script>
 </body>
 </html>
