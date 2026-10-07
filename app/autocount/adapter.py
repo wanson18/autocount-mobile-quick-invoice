@@ -642,7 +642,10 @@ class AutoCountMasterDataAdapter:
             raise AutoCountDataError(
                 "AutoCount product listing row is missing its product data"
             )
-        return cls._product_summary(product, row.get("productMultiPacks"))
+        # A listing row's ``productMultiPacks`` is not that product's own list
+        # (measured live: 31 mixed rows for an item whose GET /product has 2),
+        # so units are never read from it; ``get_item`` is their only source.
+        return cls._product_summary(product)
 
     @classmethod
     def _product_summary(

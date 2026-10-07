@@ -540,26 +540,29 @@
   }
 
   // Which units a product offers is not stored on an invoice line, so ask
-  // the item list once per distinct product. Best effort: a line whose lookup
-  // fails simply shows no selector and keeps the unit it already has.
-  async function loadUomsForEditLines() {
-    const docNo = state.editDocNo;
-    const codes = Array.from(new Set(state.editLines.map((l) => l.item_id)));
-    await Promise.all(codes.map(async (code) => {
-      try {
-        const results = await apiGet(
-          "/" + state.company.key + "/products?q=" + encodeURIComponent(code)
-        );
-        const product = results.find((p) => p.code === code);
-        if (!product || state.editDocNo !== docNo) return;
-        state.editLines.forEach((line) => {
-          if (line.item_id === code) applyProductUnits(line, product);
-        });
-      } catch (e) {
-        // Units are optional; leave the line as it is.
-      }
-    }));
-    if (state.editDocNo === docNo && state.view === "invoiceEdit") render();
+  // for each distinct product. Best effort: a line whose lookup fails shows
+  // no selector and keeps the unit it already has.
+  function loadUomsForEditLines() {
+    new Set(state.editLines.map((l) => l.item_id)).forEach((code) => {
+      loadUnitsFor(state.editLines, code);
+    });
+  }
+
+  // The search list carries only a product's base unit; its own units come
+  // from the single-product read. Fills every line of that product, then
+  // redraws -- unless the screen has moved on to other lines meanwhile.
+  async function loadUnitsFor(lines, code) {
+    try {
+      const product = await apiGet(
+        "/" + state.company.key + "/products/" + encodeURIComponent(code)
+      );
+      lines.forEach((line) => {
+        if (line.item_id === code) applyProductUnits(line, product);
+      });
+      if (lines === state.lines || lines === state.editLines) render();
+    } catch (e) {
+      // Units are optional; leave the line as it is.
+    }
   }
 
   const editLineListEl = document.getElementById("edit-line-list");
@@ -582,9 +585,10 @@
         unit_price: p.default_price,
         base_unit: p.unit || "",
         base_price: p.default_price,
-        uoms: p.uoms || [],
+        uoms: [],
       });
       render();
+      loadUnitsFor(state.editLines, p.id);
     }
   );
 
@@ -841,10 +845,11 @@
       unit: product.unit || "",
       base_unit: product.unit || "",
       base_price: product.default_price,
-      uoms: product.uoms || [],
+      uoms: [],
     };
     state.lines.push(line);
     render();
+    loadUnitsFor(state.lines, product.id);
     fetchPriceHistoryFor(line);
   }
 

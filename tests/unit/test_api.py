@@ -538,3 +538,12 @@ def test_cloud_report_redirect_uses_the_sdn_bhd_book_and_report_identity(api):
         "ab-wanson-sdn-bhd-001/invoice?reportName=WANSON+SDN+BHD+E-INVOICE+"
         "&docKey=inv-1"
     )
+
+
+def test_get_product_returns_item_with_units(api):
+    client, master, _ = api
+    response = client.get("/api/enterprise/products/ITEM-1")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["code"] == "ITEM-1"
+    assert data["uoms"] == []

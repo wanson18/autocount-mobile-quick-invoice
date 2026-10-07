@@ -124,6 +124,16 @@ async def diagnose(company: CompanyConfig, code: str) -> int:
                     shown += 1
         if not shown:
             log("    (no invoice line for this code in the last 30 days)")
+            # Fall back to any recent line whose unit differs from the product's
+            # base unit: it shows how AutoCount stores a non-base unit.
+            base = (product.get("product") or {}).get("unit")
+            for row in invoices.get("data") or []:
+                for detail in (row or {}).get("details") or []:
+                    if shown < 2 and detail.get("unit") not in (None, "", base):
+                        describe("recent line in another unit", detail)
+                        shown += 1
+            if not shown:
+                log("    (no recent line in a non-base unit either)")
         return 0
     finally:
         await client.aclose()

@@ -128,3 +128,34 @@ def test_update_keeps_a_stored_unit_the_product_no_longer_offers():
     assert _update("OLD", "OLD")["unit"] == "OLD"
     with pytest.raises(ValueError):
         _update("", "OLD")
+
+
+def test_listing_rows_never_supply_units():
+    """A listing row's multipacks are not that product's own (31 mixed rows
+    seen live for an item whose single-product read has 2)."""
+    row = {
+        "product": PRODUCT,
+        "productMultiPacks": [{"multiPack": "BOX", "multiPackRate": 24, "price": 1}],
+    }
+    summary = AutoCountMasterDataAdapter._product_row(row)
+    assert summary.unit == "PCS"
+    assert summary.uoms == ()
+
+
+def test_live_shape_for_a_multi_uom_item():
+    """Shape measured live for item 00010: base PKT, multipacks BOX and BOX12."""
+    summary = AutoCountMasterDataAdapter._product_summary(
+        {**PRODUCT, "unit": "PKT"},
+        [
+            {"productVariantId": None, "productVariant1OptionName": None,
+             "productVariant2OptionName": None, "multiPack": "BOX",
+             "multiPackRate": 10.0, "price": 55.0, "minPrice": 50.0,
+             "barCode": None, "unitType": None},
+            {"multiPack": "BOX12", "multiPackRate": 12.0, "price": 66.0},
+        ],
+    )
+    assert summary.unit == "PKT"
+    assert [(u.name, u.rate) for u in summary.uoms] == [
+        ("BOX", Decimal("10.0")),
+        ("BOX12", Decimal("12.0")),
+    ]
