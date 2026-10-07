@@ -368,6 +368,8 @@ class AutoCountMasterDataAdapter:
         customer_id: str,
         item_id: str,
         *,
+        unit: str | None = None,
+        base_unit: str = "",
         now: datetime | None = None,
     ) -> PriceHistory | None:
         """The latest unit price issued to this customer for this item.
@@ -377,6 +379,11 @@ class AutoCountMasterDataAdapter:
         most recent non-cancelled invoice whose details contain the item,
         together with that source invoice's number and date. Returns ``None``
         when no prior invoice for the pair exists in the window.
+
+        ``unit`` narrows the match to lines issued in that unit, because a
+        price per box is not a price per packet. A line with no stored unit
+        counts as the product's ``base_unit``. Without ``unit`` any line
+        matches, as before.
 
         ``now`` pins the window end for deterministic tests; the default is
         the current UTC time.
@@ -397,15 +404,25 @@ class AutoCountMasterDataAdapter:
             reverse=True,
         ):
             for line in invoice.lines:
-                if line.product_code == item_id:
+                if line.product_code == item_id and self._line_in_unit(
+                    line.unit, unit, base_unit
+                ):
                     return PriceHistory(
                         item_id=item_id,
                         customer_id=customer_id,
                         unit_price=line.unit_price,
                         source_invoice_number=invoice.doc_no,
                         source_invoice_date=invoice.doc_date,
+                        unit=line.unit,
                     )
         return None
+
+    @staticmethod
+    def _line_in_unit(line_unit: str, wanted: str | None, base_unit: str) -> bool:
+        """Whether a stored line was issued in ``wanted`` (any, when ``None``)."""
+        if wanted is None:
+            return True
+        return (line_unit or base_unit) == wanted
 
     async def get_item(
         self, company: CompanyConfig, item_id: str

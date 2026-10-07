@@ -22,6 +22,7 @@ class PriceHistoryPort(Protocol):
         company: CompanyConfig,
         customer_id: str,
         item_id: str,
+        **unit_filter: str | None,
     ) -> PriceHistory | None: ...
 
 
@@ -30,16 +31,22 @@ async def get_price_history(
     company: CompanyConfig,
     customer_id: str,
     item_ids: Iterable[str],
+    *,
+    unit: str | None = None,
+    base_unit: str = "",
 ) -> dict[str, PriceHistory | None]:
     """Latest issued price for every unique item for one customer.
 
     Deduplicates item lookups: repeated ``item_ids`` are resolved with one
-    adapter call each.
+    adapter call each. ``unit`` limits the lookup to prices issued in that
+    unit; the keywords are only passed on when set, so a caller that never
+    names a unit makes exactly the calls it always did.
     """
+    unit_filter = {"unit": unit, "base_unit": base_unit} if unit else {}
     unique_items = dict.fromkeys(item_ids)
     return {
         item_id: await master_data.get_latest_price(
-            company, customer_id, item_id
+            company, customer_id, item_id, **unit_filter
         )
         for item_id in unique_items
     }

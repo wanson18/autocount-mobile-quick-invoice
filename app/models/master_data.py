@@ -102,6 +102,8 @@ class PriceHistory:
     unit_price: Decimal
     source_invoice_number: str
     source_invoice_date: str
+    #: The unit that price was issued in, as stored on the source line.
+    unit: str = ""
 
 
 @dataclass(frozen=True)

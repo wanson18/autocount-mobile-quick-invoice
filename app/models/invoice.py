@@ -69,6 +69,10 @@ class InvoicePreviewInput(BaseModel):
     company: CompanyKey
     customer_id: NonBlankIdentifier
     item_ids: list[NonBlankIdentifier] = Field(min_length=1)
+    #: Only propose prices issued in this unit; ``base_unit`` is what a line
+    #: with no stored unit counts as. Absent means any unit.
+    unit: UnitName | None = None
+    base_unit: UnitName | None = None
 
 
 class InvoiceEditLine(BaseModel):

@@ -853,18 +853,26 @@
     fetchPriceHistoryFor(line);
   }
 
+  // The customer's last price for this item *in the line's current unit*: a
+  // price per box is not a price per packet. Asked again whenever the unit
+  // changes; a late answer for a unit the line has left, or over a price the
+  // user has since typed, is dropped.
   async function fetchPriceHistoryFor(line) {
     if (!state.customer) return;
+    const asked = line.unit;
     try {
-      const data = await apiPost("/invoices/preview", {
+      const body = {
         company: state.company.key,
         customer_id: state.customer.id,
         item_ids: [line.item_id],
-      });
+      };
+      if (asked) {
+        body.unit = asked;
+        if (line.base_unit) body.base_unit = line.base_unit;
+      }
+      const data = await apiPost("/invoices/preview", body);
       const entry = (data.items || [])[0];
-      // History prices are per the unit last sold, which is not recorded, so
-      // only trust one while the line is still in the product's base unit.
-      if (entry && entry.latest_unit_price && line.unit === line.base_unit) {
+      if (entry && entry.latest_unit_price && line.unit === asked && !line.priceTouched) {
         line.unit_price = entry.latest_unit_price;
         line.original_unit_price = entry.latest_unit_price;
         line.priceSource = "history";
@@ -974,7 +982,10 @@
         line.unit_price = option.price;
         if ("original_unit_price" in line) line.original_unit_price = option.price;
         line.priceSourceLabel = null;
+        line.priceTouched = false;
         rerender();
+        // New invoice lines only: the edit screen shows no price history.
+        if (lines === state.lines) fetchPriceHistoryFor(line);
       };
     });
   }
@@ -998,6 +1009,7 @@
         // A typed price is a manual override, so any inherited price hint no
         // longer describes it. The edit screen shows no hint; harmless there.
         line.priceSourceLabel = null;
+        line.priceTouched = true;
         onChange();
         updateLineTotal(input);
       };

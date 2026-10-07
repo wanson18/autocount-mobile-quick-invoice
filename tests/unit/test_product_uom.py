@@ -159,3 +159,66 @@ def test_live_shape_for_a_multi_uom_item():
         ("BOX", Decimal("10.0")),
         ("BOX12", Decimal("12.0")),
     ]
+
+
+# --- price history follows the unit -----------------------------------------
+
+from datetime import datetime, timezone  # noqa: E402
+
+from app.services.price_history import get_price_history  # noqa: E402
+
+
+def _history_adapter(lines_by_invoice):
+    adapter = object.__new__(AutoCountMasterDataAdapter)
+
+    async def search_invoices(company, *, customer_id, date_from, date_to):
+        return [
+            InvoiceSummary(
+                id=str(i), doc_no=f"INV-{i}", doc_date=f"2026-10-0{i}",
+                debtor_code=customer_id, total=Decimal("1"), lines=tuple(lines),
+            )
+            for i, lines in lines_by_invoice
+        ]
+
+    adapter.search_invoices = search_invoices
+    return adapter
+
+
+def _line(price, unit):
+    return InvoiceLineSummary("OIL", Decimal("1"), Decimal(price), unit=unit)
+
+
+@pytest.mark.asyncio
+async def test_history_matches_the_unit_asked_for():
+    adapter = _history_adapter([(2, [_line("55", "BOX")]), (1, [_line("6", "PKT")])])
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+
+    async def price(**kw):
+        return await adapter.get_latest_price(None, "C1", "OIL", now=now, **kw)
+
+    assert (await price()).unit_price == Decimal("55")  # no unit: newest, as before
+    assert (await price(unit="BOX")).unit_price == Decimal("55")
+    assert (await price(unit="PKT", base_unit="PKT")).unit_price == Decimal("6")
+    assert await price(unit="BOX12") is None
+
+
+@pytest.mark.asyncio
+async def test_history_counts_a_line_with_no_unit_as_the_base_unit():
+    adapter = _history_adapter([(1, [_line("6", "")])])
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    hit = await adapter.get_latest_price(None, "C1", "OIL", unit="PKT", base_unit="PKT", now=now)
+    assert hit.unit_price == Decimal("6")
+    assert await adapter.get_latest_price(None, "C1", "OIL", unit="BOX", base_unit="PKT", now=now) is None
+
+
+@pytest.mark.asyncio
+async def test_price_history_service_passes_the_unit_only_when_set():
+    seen = []
+
+    class Port:
+        async def get_latest_price(self, company, customer_id, item_id, **kw):
+            seen.append(kw)
+
+    await get_price_history(Port(), None, "C1", ["OIL"])
+    await get_price_history(Port(), None, "C1", ["OIL"], unit="BOX", base_unit="PKT")
+    assert seen == [{}, {"unit": "BOX", "base_unit": "PKT"}]
