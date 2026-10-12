@@ -4,7 +4,7 @@
 
 Rules that apply across all Wanson repos (company separation, draft-only, no secrets) live in the **private** repo `wanson18/Wanson_Automation`, at `Wanson-Context/README.md`. Read it when you have access. This file keeps only this app's own rules.
 
-This app issuing invoices with `saveApprove: true` / `submitEInvoice: false` is an exception Sofian approved (2026-10-12), for this app only. Do not change it, and do not cite it as a reason to approve anywhere else.
+Consult the private Wanson Context Hub for this app's authorization boundaries before changing invoice approval behavior.
 
 This repo is **public**: never add business rules, customer data, credentials or internal workflows here. Link to the private hub instead.
 
