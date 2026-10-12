@@ -35,6 +35,7 @@ from app.autocount.errors import (
     AutoCountUnsupportedError,
 )
 from app.config import CompanyConfigError
+from app.mcp_connection import build_mcp_app, MOUNT_PATH
 from app.repositories.request_repository import IdempotencyConflictError
 from app.services.invoice_edit_service import (
     InvoiceChangedError,
@@ -50,6 +51,8 @@ from app.services.invoice_service import (
     InvoiceValidationError,
 )
 
+mcp_app = build_mcp_app()
+
 app = FastAPI(
     title="AutoCount Mobile Quick Invoice",
     version="0.1.0",
@@ -59,12 +62,29 @@ app = FastAPI(
         "server-side and never accepted from the client."
     ),
     openapi_url="/openapi.json",
+    lifespan=mcp_app.router.lifespan_context,
 )
 
 app.include_router(companies.router, prefix="/api")
 app.include_router(customers.router, prefix="/api")
 app.include_router(products.router, prefix="/api")
 app.include_router(invoices.router, prefix="/api")
+
+# Mounted before the static website. No changes to the established REST routes.
+app.mount(MOUNT_PATH, mcp_app, name="invoice-mcp")
+
+
+@app.get('/.well-known/{metadata_path:path}', include_in_schema=False)
+async def mcp_discovery_redirect(metadata_path: str):
+    from fastapi.responses import RedirectResponse
+    # RFC 8414 / RFC 9728 discover metadata at the domain root for path issuers.
+    permitted = {'oauth-authorization-server/invoice-mcp',
+                 'oauth-protected-resource/invoice-mcp/mcp'}
+    if metadata_path not in permitted:
+        return JSONResponse({'error': 'not_found'}, status_code=404)
+    leaf = metadata_path.split('/invoice-mcp', 1)[0]
+    suffix = '/invoice-mcp/mcp' if leaf == 'oauth-protected-resource' else ''
+    return RedirectResponse(f'{MOUNT_PATH}/.well-known/{leaf}{suffix}')
 
 
 class RevalidatingStaticFiles(StaticFiles):
