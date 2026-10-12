@@ -254,7 +254,9 @@ def test_a_missing_debtor_name_comes_back_blank_rather_than_absent(client_with):
 
 
 def test_get_invoice_returns_lines_with_exact_money(client_with):
-    client = client_with(FakeMasterData())
+    # This endpoint uses the real current date. Keep this money/line regression
+    # recent; fixed August fixtures become uneditable after the 30-day window.
+    client = client_with(FakeMasterData([invoice(doc_date=date.today().isoformat())]))
     response = client.get("/api/sdn_bhd/invoices/I-000123")
 
     assert response.status_code == 200
@@ -266,6 +268,7 @@ def test_get_invoice_returns_lines_with_exact_money(client_with):
             "description": "Cooking Oil 5kg",
             "quantity": "2",
             "unit_price": "31.50",
+            "unit": "",
         }
     ]
 

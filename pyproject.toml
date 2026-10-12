@@ -8,6 +8,8 @@ dependencies = [
     "uvicorn",
     "pydantic>=2",
     "httpx",
+    "fastmcp==4.1.0",
+    "py-key-value-aio[postgresql]==0.4.6",
     # Only imported when POSTGRES_URL/DATABASE_URL is set (see
     # app/dependencies.py) — required in production on Vercel, where the
     # idempotency DB must be Postgres because the filesystem is ephemeral.
