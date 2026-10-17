@@ -518,7 +518,7 @@ def test_cloud_report_redirect_uses_selected_company_book_and_invoice_key(api):
     assert response.status_code == 307
     assert response.headers["location"] == (
         "https://accounting-report.autocountcloud.com/rpt/"
-        "ab-wanson-enterprise-001/invoice?reportName=Wanson+Enterprise+Invoice"
+        "ab-wanson-enterprise-001/invoice?reportName=Wanson+Enterprise+e-Invoice"
         "&docKey=inv-1"
     )
     assert SDN_BHD_AB not in response.headers["location"]

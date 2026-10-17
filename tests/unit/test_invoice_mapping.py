@@ -1,5 +1,6 @@
 """Task 6 — mapping a confirmed mobile draft to AutoCount's invoice API."""
 
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 import pytest
@@ -172,6 +173,34 @@ def test_maps_cash_tax_entity_and_item_classification_for_quick_invoice():
         "022",
         "022",
     ]
+
+
+@pytest.mark.parametrize("blank_code", [None, "", "   "])
+def test_enterprise_defaults_blank_product_classification_to_022(blank_code):
+    draft = make_draft().model_copy(update={"company": CompanyKey.ENTERPRISE})
+    products = resolved_products()
+    products["OIL-5KG"] = replace(
+        products["OIL-5KG"], classification_code=blank_code
+    )
+    products["OIL-2KG"] = replace(
+        products["OIL-2KG"], classification_code="008"
+    )
+
+    payload = map_invoice_payload(
+        draft, resolved_customer(), resolved_address(), products
+    )
+
+    assert [line["classificationCode"] for line in payload["details"]] == [
+        "022", "008"
+    ]
+
+
+def test_sdn_bhd_missing_classification_remains_unset():
+    payload = map_invoice_payload(
+        make_draft(), resolved_customer(), resolved_address(), resolved_products()
+    )
+
+    assert all("classificationCode" not in line for line in payload["details"])
 
 
 def test_default_credit_term_and_sales_location_are_wanson_standard_terms():

@@ -58,7 +58,7 @@ def test_enterprise_report_uses_selected_book_and_confirmed_invoice_key(
     parsed = urlsplit(location)
     query = parse_qs(parsed.query)
     assert parsed.path == "/rpt/ab-ent/invoice"
-    assert query["reportName"] == ["Wanson Enterprise Invoice"]
+    assert query["reportName"] == ["Wanson Enterprise e-Invoice"]
     assert query["docKey"] == ["304"]
     assert master.calls[0][0].account_book_id == "ab-ent"
     assert master.calls[0][1] == "INV-31190"

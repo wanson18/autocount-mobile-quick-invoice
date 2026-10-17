@@ -53,7 +53,7 @@ ENV_DATABASE_URL = "DATABASE_URL"
 # configured AutoCount report identity.
 CLOUD_REPORT_BASE_URL = "https://accounting-report.autocountcloud.com"
 CLOUD_INVOICE_REPORT_NAMES = {
-    CompanyKey.ENTERPRISE: "Wanson Enterprise Invoice",
+    CompanyKey.ENTERPRISE: "Wanson Enterprise e-Invoice",
     CompanyKey.SDN_BHD: "WANSON SDN BHD E-INVOICE ",
 }
 

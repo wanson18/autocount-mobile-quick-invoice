@@ -3,6 +3,7 @@
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from app.models.company import CompanyKey
 from app.models.invoice import InvoiceDraftInput, InvoiceEditLine
 from app.models.master_data import (
     CustomerSummary,
@@ -94,6 +95,13 @@ def map_invoice_payload(
         if product is None or product.id != line.item_id or product.code != line.item_id:
             raise ValueError(f"resolved product does not match item {line.item_id}")
         unit = _checked_unit(product, line.unit)
+        classification_code = getattr(product, "classification_code", None)
+        # Owner-requested Enterprise default for missing classifications.
+        # Preserve explicit product codes and leave Sdn Bhd unchanged.
+        if draft.company == CompanyKey.ENTERPRISE and not (
+            classification_code and classification_code.strip()
+        ):
+            classification_code = "022"
         details.append(
             {
                 "productCode": product.code,
@@ -108,11 +116,11 @@ def map_invoice_payload(
                 "unitPrice": line.unit_price,
                 # Required per-line Sales GL account; see DEFAULT_ACC_NO above.
                 "accNo": DEFAULT_ACC_NO,
-                # Product classification is sourced from the authoritative
-                # product lookup; never infer it from the item description.
+                # Use the product's classification, or the company default
+                # above; never infer it from the item description.
                 **(
-                    {"classificationCode": product.classification_code}
-                    if getattr(product, "classification_code", None)
+                    {"classificationCode": classification_code}
+                    if classification_code
                     else {}
                 ),
             }
